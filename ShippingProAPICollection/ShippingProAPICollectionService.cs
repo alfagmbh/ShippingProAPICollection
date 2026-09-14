@@ -97,6 +97,15 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException("Unknown shipping provider");
         }
 
+        public async Task<List<TrackParcelResponse>> TrackLabels(string contractID, string[] trackingIds, CancellationToken ct = default)
+        {
+            if (providerServices.TryGetValue(contractID, out var service))
+            {
+                return await service.TrackLabels(trackingIds, ct);
+            }
+            throw new InvalidOperationException("Unknown shipping provider");
+        }
+
         public async Task Confirm(string contractID, string confirmId, CancellationToken ct = default)
         {
 

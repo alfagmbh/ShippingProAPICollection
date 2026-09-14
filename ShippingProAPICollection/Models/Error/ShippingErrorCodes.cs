@@ -24,5 +24,8 @@ namespace ShippingProAPICollection.Models.Error
         TOF_LOGIN_ERROR,
         NOT_FOUND,
         TOF_DOWNLOAD_PDF_ERROR,
+        GLS_DELIVERY_INFO_NOT_AVAILABLE,
+        DPD_DELIVERY_INFO_NOT_AVAILABLE,
+
     }
 }

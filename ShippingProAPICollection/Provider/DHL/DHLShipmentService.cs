@@ -411,6 +411,9 @@ namespace ShippingProAPICollection.Provider.DHL
             }
         }
 
-
+        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

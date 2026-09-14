@@ -2,6 +2,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using RestSharp;
 using RestSharp.Authenticators;
+using ShippingProAPICollection._Provider.DHL;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
@@ -12,6 +13,7 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
+using ShippingProAPICollection.Provider.GLS.Entities.ParcelInfo;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
 
 namespace ShippingProAPICollection.Provider.GLS
@@ -30,7 +32,6 @@ namespace ShippingProAPICollection.Provider.GLS
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
         {
-
             var GLSRequest = request as GLSShipmentRequestModel;
             if (GLSRequest == null) throw new Exception("Cannot convert request to GLSShipmentRequestModel");
 
@@ -56,7 +57,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 Method.Post,
                 shipmentRequest,
                 cancelToken
-                );
+                                                                                                   );
 
             List<RequestShippingLabelResponse> createdLabels = new List<RequestShippingLabelResponse>();
 
@@ -88,7 +89,6 @@ namespace ShippingProAPICollection.Provider.GLS
             }
 
             return createdLabels;
-
         }
 
         public async Task<ShippingCancelResult> CancelLabel(string cancelId, CancellationToken cancelToken = default)
@@ -98,7 +98,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 Method.Post,
                 cancelId,
                 cancelToken
-                );
+                                                                                                 );
 
             if (response.Data == null) throw new Exception("Reponse was null");
 
@@ -107,12 +107,13 @@ namespace ShippingProAPICollection.Provider.GLS
                 case "CANCELLED":
                 case "CANCELLATION_PENDING":
                     return ShippingCancelResult.CANCELED;
+
                 case "SCANNED":
                     return ShippingCancelResult.ALREADY_IN_USE;
+
                 default:
                     throw new GLSException(ShippingErrorCode.UNKNOW, "Unknow cancel reponse", new { payload = cancelId, response = response.Data.Result });
             }
-
         }
 
         public async Task<ValidationReponse> ValidateLabel(RequestShipmentBase request, CancellationToken cancelToken)
@@ -125,11 +126,11 @@ namespace ShippingProAPICollection.Provider.GLS
             var requestBody = new ValidateShipmentRequestData() { Shipment = shipment };
 
             RestResponse<ValidateParcelsResponse> response = await CallApi<ValidateParcelsResponse>(
-               new Uri(string.Format("{0}/backend/rs/shipments/validate", providerSettings.ApiDomain)),
-               Method.Post,
-               requestBody,
-               cancelToken
-               );
+                new Uri(string.Format("{0}/backend/rs/shipments/validate", providerSettings.ApiDomain)),
+                Method.Post,
+                requestBody,
+                cancelToken
+                                                                                                   );
 
             if (response.Data == null) throw new Exception("Reponse was null");
 
@@ -147,33 +148,43 @@ namespace ShippingProAPICollection.Provider.GLS
                     case "SHIPMENT_VALID_INCOTERM_IF_NEEDED":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_INCOTERM_ERROR, Message = "Es wird ein gültiger Incoterm für die Sendung benötigt." });
                         break;
+
                     case "ARTICLES_PRODUCT_MUST_BE_SET":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_PRODUCT_CANNOT_USE_ERROR, Message = "GLS-Produkt kann für die Lieferadresse nicht angewandt werden." });
                         break;
+
                     case "ARTICLES_EXPRESS_SATURDAY":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_NEXT_DAY_NOT_SATURDAY_ERROR, Message = "Nächster Werktag ist nicht Samstag. Service kann heute nicht gebucht werden." });
                         break;
+
                     case "SHIPMENT_VALID_ROUTING":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_ROUTING_ERROR, Message = "Kein gültiges Routing mit GLS möglich: " + (validationErrorKey.Value?.Parameters?[0] ?? "UNKNOW") });
                         break;
+
                     case "ADDRESS_VALID_ZIPCODE":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_POSTCODE_ERROR, Message = "Keine gültige Postleitzahl vorhanden." });
                         break;
+
                     case "ARTICLES_PRODUCT_WEIGHT":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_WEIGHT_ERROR, Message = "Gewicht ist zu gering oder zu hoch für dieses Produkt." });
                         break;
+
                     case "ARTICLE_COMBINATIONS":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_ARTICLE_COMBINATIONS_ERROR, Message = "GLS-Produktkombination können nicht zusammen gebucht werden." });
                         break;
+
                     case "ARTICLES_DESTINATION_EXCLUSIONS":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_ARTICLE_DESTINATION_EXCLUSION_ERROR, Message = "GLS-Service und Produkt sind zur Lieferadresse nicht möglich" });
                         break;
+
                     case "COMMON":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_COMMON_ERROR, Message = $"GLS-Labeldruck einfacher Fehler aufgetreten: Location: {validationErrorKey.Value?.Location ?? "UNKNOW"} Message: {validationErrorKey.Value?.Parameters?[0] ?? "UNKNOW"} " });
                         break;
+
                     case "ARTICLES_VALID_FOR_COUNTRY":
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.GLS_ARTICLE_COMBINATIONS_ERROR, Message = $"Artikelkombination ist in diesem Land nicht verfügbar" });
                         break;
+
                     default:
                         reponseIssues.Add(new GLSValidationReponseIssue() { ErrorCode = ShippingErrorCode.UNKNOW, Message = "GLS-Labeldruck nicht abgedeckter Fehler entdeckt: " + validationErrorKey.Key });
                         break;
@@ -181,8 +192,47 @@ namespace ShippingProAPICollection.Provider.GLS
             }
 
             return new GLSValidationReponse() { Success = true, ValidationIssues = reponseIssues };
-
         }
+
+        public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        {
+            string parcelIds = string.Join(",", parcelId);
+            RestResponse<DeliveryInfo> response = await CallApi<DeliveryInfo>(
+                new Uri(string.Format("{0}/tracking/deliveryinfo/parcelid/{1}?showLinks=false", providerSettings.ApiDomain, parcelIds)),
+                Method.Get,
+                null,
+                cancelToken);
+
+            if (response.Data != null)
+            {
+                List<TrackParcelResponse> deliveryInfoList = new List<TrackParcelResponse>();   
+                for (int i = 0; i < response.Data.Parcels.Count(); i++)
+                {
+
+                    var parcel = response.Data.Parcels[i];
+                    for (int e = 0; e < parcel.Events.Count(); e++)
+                    {
+                        Event @event = parcel.Events[e];
+                        deliveryInfoList.Add(new TrackParcelResponse()
+                        {
+                            ParcelNumber = parcel.UnitNo,
+                            Status = parcel.Status.ToString(),
+                            ResponseCode = @event.Code,
+                            City = @event.City,
+                            PostalCode = @event.PostalCode,
+                            Country = @event.Country,
+                            Description = @event.Description,
+                            ErrorMessage = parcel.ErrorMessage
+                        });
+                    }
+                }
+                return deliveryInfoList;
+
+            }
+
+            throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE, $"Delivery info not available for the given parcel IDs {parcelIds}");
+        }
+      
 
         public async Task<uint> GetEstimatedDeliveryDays(RequestShipmentBase request, CancellationToken cancelToken)
         {
@@ -227,7 +277,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 Method.Post,
                 requestBody,
                 cancelToken
-            );
+                                                                                                               );
 
             return response?.Data?.NumberOfWorkDays ?? 0;
         }
@@ -291,7 +341,6 @@ namespace ShippingProAPICollection.Provider.GLS
             }
 
             return response;
-
         }
 
         /// <summary>
@@ -299,9 +348,8 @@ namespace ShippingProAPICollection.Provider.GLS
         /// </summary>
         /// <param name="request"></param>
         /// <returns></returns>
-        private Shipment CreateRequestModel(GLSShipmentRequestModel request)
+        private Entities.Create.Shipment CreateRequestModel(GLSShipmentRequestModel request)
         {
-
             List<ShipmentUnit> units = new List<ShipmentUnit>();
 
             List<string> shipmentUnitReference = new List<string>();
@@ -346,16 +394,15 @@ namespace ShippingProAPICollection.Provider.GLS
                 });
             }
 
-
             string? incotermCode = request.IncotermCode == null || request.IncotermCode != null && request.IncotermCode == 0 ? null : request.IncotermCode.ToString();
 
             // Create shipment
-            Shipment shipment = new Shipment()
+            Entities.Create.Shipment shipment = new Entities.Create.Shipment()
             {
                 IncotermCode = incotermCode,
                 ShippingDate = request.EarliestDeliveryDate.ToString("yyyy-MM-dd"),
                 Product = request.ServiceProduct,
-                Consignee = new Consignee()
+                Consignee = new Entities.Create.Consignee()
                 {
                     Address = new Address()
                     {
@@ -372,7 +419,7 @@ namespace ShippingProAPICollection.Provider.GLS
                     }
                 },
 
-                Shipper = new Shipper()
+                Shipper = new Entities.Create.Shipper()
                 {
                     ContactID = providerSettings.ContactID,
                     AlternativeShipperAddress = null
@@ -382,9 +429,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 Service = ResolveGLSShipmentService(request),
             };
 
-
             return shipment;
-
         }
 
         /// <summary>
@@ -436,7 +481,5 @@ namespace ShippingProAPICollection.Provider.GLS
 
             return services.ToArray();
         }
-
-
     }
 }

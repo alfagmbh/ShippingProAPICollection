@@ -48,5 +48,7 @@ namespace ShippingProAPICollection.Provider
         public Task ConfirmShipment(string confirmId, CancellationToken cancelToken);
 
         public float GetMaxPackageWeight();
+
+        Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken);
     }
 }

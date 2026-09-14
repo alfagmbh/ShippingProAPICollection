@@ -123,6 +123,14 @@ namespace ShippingProAPICollection.Provider.DPD
         {
             return providerSettings.MaxPackageWeight;
         }
+        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        {
+
+            string url = string.Format("https://public-{0}.dpd.com/services/ParcelService/v1/", providerSettings.ApiDomain);
+
+
+            throw new DPDException(ShippingErrorCode.DPD_DELIVERY_INFO_NOT_AVAILABLE, "DPD delivery info not available");
+        }
         private storeOrders CreateRequestModel(DPDShipmentRequestModel request)
         {
             var order = new storeOrders();

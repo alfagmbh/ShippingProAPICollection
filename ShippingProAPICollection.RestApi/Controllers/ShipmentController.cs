@@ -194,5 +194,17 @@ namespace ShippingProAPICollection.RestApi.Controllers
             return new NoContentResult();
         }
 
+
+        [HttpGet]
+        [Route("track")]
+        [EnableCors("Intern")]
+        [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
+        [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
+        [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
+        public async Task<IActionResult> TrackLabels([FromBody, BindRequired] TrackLabelsRequest request)
+        {
+            var trackingResults = await shippingProAPICollectionService.TrackLabels(request.ContractID, request.TrackingNumbers);
+            return Ok(trackingResults);
+        }
     }
 }
