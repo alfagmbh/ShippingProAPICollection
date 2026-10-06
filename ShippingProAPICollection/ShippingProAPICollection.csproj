@@ -34,9 +34,17 @@
       <PackagePath>\</PackagePath>
     </None>
   </ItemGroup>
+  
+  <ItemGroup>
+    <OpenApiReference Include="..\..\..\..\Downloads\ecitrackandtrace.yaml" Namespace="ShippingProAPICollection/GLSTrackingAndTraceV1" ClassName="GLSTrackingAndTraceV1" Link="OpenAPIs\ecitrackandtrace.yaml" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.5.1" />
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Client" Version="7.0.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
     <PackageReference Include="NSwag.ApiDescription.Client" Version="14.2.0">
@@ -45,6 +53,7 @@
     </PackageReference>
     <PackageReference Include="RestSharp" Version="112.1.0" />
     <PackageReference Include="System.Formats.Asn1" Version="9.0.3" />
+    <PackageReference Include="System.Runtime.Serialization.Primitives" Version="4.3.0" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.3" />
     <PackageReference Include="System.ServiceModel.Duplex" Version="4.10.3" />
     <PackageReference Include="System.ServiceModel.Federation" Version="8.1.2" />

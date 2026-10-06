@@ -8,12 +8,12 @@ using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DHL.Entities.VASService;
+using System.Globalization;
 
 namespace ShippingProAPICollection.Provider.DHL
 {
     public class DHLShipmentService : IShippingProviderService
     {
-
         private DHLSettings providerSettings = null!;
         private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
 
@@ -44,7 +44,6 @@ namespace ShippingProAPICollection.Provider.DHL
 
             using (RestClient client = new RestClient(clientOptions))
             {
-
                 var clientRequest = new RestRequest()
                 {
                     Method = Method.Post
@@ -79,7 +78,6 @@ namespace ShippingProAPICollection.Provider.DHL
                     }
 
                     List<RequestShippingLabelResponse> labels = new List<RequestShippingLabelResponse>();
-
 
                     for (int i = 0; i < objectResponse_.Items.Count; i++)
                     {
@@ -123,9 +121,7 @@ namespace ShippingProAPICollection.Provider.DHL
                 {
                     throw new DHLException(ShippingErrorCode.UNKNOW, "The HTTP status code of the response was not expected (" + (int)response.StatusCode + ").", new { payload = requestBody, respone = response.Content });
                 }
-
             }
-
         }
 
         public async Task<ShippingCancelResult> CancelLabel(string cancelId, CancellationToken cancelToken = default)
@@ -146,7 +142,6 @@ namespace ShippingProAPICollection.Provider.DHL
 
             using (RestClient client = new RestClient(clientOptions))
             {
-
                 var clientRequest = new RestRequest()
                 {
                     Method = Method.Delete
@@ -199,7 +194,6 @@ namespace ShippingProAPICollection.Provider.DHL
                     throw new DHLException(ShippingErrorCode.UNKNOW, "The HTTP status code of the response was not expected (" + (int)response.StatusCode + ").", new { payload = cancelId, respone = response.Content });
                 }
             }
-
         }
 
         public async Task<ValidationReponse> ValidateLabel(RequestShipmentBase request, CancellationToken cancelToken)
@@ -222,6 +216,95 @@ namespace ShippingProAPICollection.Provider.DHL
             return providerSettings.MaxPackageWeight;
         }
 
+        public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        {
+            List<TrackParcelResponse> TrackLabels = new List<TrackParcelResponse>();
+            foreach (var request in parcelId)
+            {
+                var trackParcelResponse = new TrackParcelResponse();
+                TrackLabels.Add(trackParcelResponse);
+                try
+                {
+                    var response = await FetchPackage(request, cancelToken);
+                    var latestEvent = response.Shipments[0].Events?.OrderByDescending(e => e.Timestamp).FirstOrDefault();
+
+                    trackParcelResponse.ParcelNumber = response.Shipments[0].Id;
+                    trackParcelResponse.Status = JsonConvert.SerializeObject(response.Shipments[0].Status?.StatusCode);
+                    trackParcelResponse.LastEvent = JsonConvert.SerializeObject(latestEvent);
+
+                    string json = JsonConvert.SerializeObject(trackParcelResponse);
+                }
+                catch (Exception ex)
+                {
+                    trackParcelResponse.ErrorMessage = ex.Message;
+                }
+            }
+            throw new DHLException(ShippingErrorCode.NOT_FOUND, "No parcel found for tracking", new { payload = parcelId });
+        }
+
+        private async Task<DHLTrackingResponse> FetchPackage(string request, CancellationToken cancelToken)
+        {
+            var urlBuilder_ = new System.Text.StringBuilder();
+            var baseUrl = string.Format("https://api-eu.dhl.com/", providerSettings.ApiDomain);
+
+            urlBuilder_.Append(baseUrl != null ? baseUrl.TrimEnd('/') : "").Append("/track/shipments?");
+            urlBuilder_.Append("trackingNumber=").Append(request).Append("&");
+
+            urlBuilder_.Length--;
+
+            var clientOptions = new RestClientOptions(baseUrl);
+
+            using (RestClient client = new RestClient(clientOptions))
+            {
+                var clientRequest = new RestRequest(new Uri(urlBuilder_.ToString(), UriKind.RelativeOrAbsolute), Method.Get);
+
+                clientRequest.AddHeader("DHL-API-Key".ToLower(CultureInfo.InvariantCulture), /*providerSettings.APIKey*/ "02I4mIrzvZJzlg1e9VHlf4LjCycmMome");
+
+                if (!string.IsNullOrEmpty(providerSettings.APILanguage))
+                {
+                    clientRequest.AddHeader("accept-language".ToLower(CultureInfo.InvariantCulture), providerSettings.APILanguage);
+                }
+
+                RestResponse response = await client.ExecuteAsync(clientRequest, cancelToken).ConfigureAwait(false);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.OK || response.StatusCode == System.Net.HttpStatusCode.MultiStatus)
+                {
+                    return JsonConvert.DeserializeObject<DHLTrackingResponse>(response.Content ?? "")
+
+                        ?? throw new DHLException(
+                            ShippingErrorCode.CANNOT_CONVERT_RESPONSE,
+                                "Cannot convert reponse to object",
+                                new { payload = request, respone = response.Content });
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                {
+                    var objectResponse_ = JsonConvert.DeserializeObject<LabelDataResponse>(response.Content ?? "");
+                    if (objectResponse_ == null)
+                    {
+                        throw new DHLException(ShippingErrorCode.CANNOT_CONVERT_RESPONSE, "Cannot convert reponse to object", new { payload = request, respone = response.Content });
+                    }
+
+                    throw new DHLException(ShippingErrorCode.BAD_REQUEST_ERROR, objectResponse_.Items?.FirstOrDefault()?.ValidationMessages.FirstOrDefault()?.ValidationMessage ?? "Unknow message", new { payload = request, respone = response.Content });
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    throw new DHLException(ShippingErrorCode.UNAUTHORIZED, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    throw new DHLException(ShippingErrorCode.TO_MANY_REQUESTS, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
+                }
+                else if (response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+                {
+                    throw new DHLException(ShippingErrorCode.INTERNAL_SERVER_ERROR, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
+                }
+                else
+                {
+                    throw new DHLException(ShippingErrorCode.UNKNOW, "The HTTP status code of the response was not expected (" + (int)response.StatusCode + ").", new { payload = request, respone = response.Content });
+                }
+            }
+        }
+
         /// <summary>
         /// Create the DHL request body informations
         /// </summary>
@@ -233,7 +316,7 @@ namespace ShippingProAPICollection.Provider.DHL
 
             // Resolve dependent Services
             foreach (var dS in request.ServiceProduct.GetDependentServices()
-                   .Where(dS => request.VASServices.All(x => x.GetType() != dS.GetType())))
+                     .Where(dS => request.VASServices.All(x => x.GetType() != dS.GetType())))
             {
                 request.VASServices.Add(dS);
             }
@@ -261,7 +344,7 @@ namespace ShippingProAPICollection.Provider.DHL
             // Build shipment for each requested label
             for (int i = 0; i < request.Items.Count; i++)
             {
-                Shipment shipment = new Shipment();
+                _Provider.DHL.Shipment shipment = new _Provider.DHL.Shipment();
 
                 shipment.Product = request.ServiceProduct.ToServiceString();
                 shipment.BillingNumber = GetBillingNumber(request);
@@ -270,9 +353,9 @@ namespace ShippingProAPICollection.Provider.DHL
                 shipment.Consignee = consignee;
                 shipment.RefNo = request.GetRefString();
 
-                shipment.Details = new ShipmentDetails()
+                shipment.Details = new _Provider.DHL.ShipmentDetails()
                 {
-                    Weight = new Weight()
+                    Weight = new _Provider.DHL.Weight()
                     {
                         Uom = WeightUom.Kg,
                         Value = request.Items[i].Weight
@@ -285,7 +368,6 @@ namespace ShippingProAPICollection.Provider.DHL
             }
 
             return shipmentOrderRequest;
-
         }
 
         private VAS ResolveVASService(DHLShipmentRequestModel request)
@@ -299,12 +381,15 @@ namespace ShippingProAPICollection.Provider.DHL
                     case VASPlaceOfDepositService placeOfDepositService:
                         vas.PreferredLocation = request.ServiceType == DHLServiceType.DEPOSIT ? placeOfDepositService.PlaceOfDeposit : null;
                         break;
+
                     case VASPreferredNeighbourService preferredNeighbourService:
                         vas.PreferredNeighbour = preferredNeighbourService.PreferredNeighbour;
                         break;
+
                     case VASPreferredLocationService preferredLocationService:
                         vas.PreferredLocation = preferredLocationService.PreferredLocation;
                         break;
+
                     case VASIdentCheckService identCheckService:
                         vas.IdentCheck = new VASIdentCheck()
                         {
@@ -314,6 +399,7 @@ namespace ShippingProAPICollection.Provider.DHL
                             MinimumAge = identCheckService.MinimumAge == MinimumAge.A16 ? VASIdentCheckMinimumAge.A16 : VASIdentCheckMinimumAge.A18,
                         };
                         break;
+
                     case VASTransportInsuranceService transportInsuranceService:
                         vas.AdditionalInsurance = new Value
                         {
@@ -321,6 +407,7 @@ namespace ShippingProAPICollection.Provider.DHL
                             Currency = EnumUtils.ToEnum(transportInsuranceService.Currency, ValueCurrency.UNKNOWN),
                         };
                         break;
+
                     case VASPremiumService:
                         vas.Premium = true;
                         break;
@@ -365,12 +452,14 @@ namespace ShippingProAPICollection.Provider.DHL
                     if (!String.IsNullOrEmpty(request.StreetNumber)) consignee.AdditionalProperties.Add("addressHouse", request.StreetNumber);
                     if (!String.IsNullOrEmpty(request.Phone)) consignee.AdditionalProperties.Add("phone", request.Phone);
                     break;
+
                 case DHLServiceType.LOCKER:
                     if (request.Locker == null) throw new ShipmentRequestNotNullException("Locker");
                     consignee.AdditionalProperties.Add("name", request.Addressline1);
                     consignee.AdditionalProperties.Add("lockerID", request.Locker.PackstationNumber);
                     consignee.AdditionalProperties.Add("postNumber", request.Locker.PostNumber);
                     break;
+
                 case DHLServiceType.POSTOFFICE:
                     if (request.PostOffice == null) throw new ShipmentRequestNotNullException("PostOffice");
                     consignee.AdditionalProperties.Add("name", request.Addressline1);
@@ -395,25 +484,24 @@ namespace ShippingProAPICollection.Provider.DHL
                 case DHLProductType.V01PAK:
                 case DHLProductType.V01PRIO:
                     return providerSettings.NationalAccountNumber;
+
                 case DHLProductType.V53WPAK:
                     return providerSettings.InternationalAccountNumber;
+
                 case DHLProductType.V62KP:
                     if (string.IsNullOrWhiteSpace(providerSettings.WarenpostNationalAccountNumber))
                         throw new Exception("Warenpost national Accountnumber not defined");
                     return providerSettings.WarenpostNationalAccountNumber;
+
                 case DHLProductType.V66WPI:
                 case DHLProductType.V66WPI_V66PREM:
                     if (string.IsNullOrWhiteSpace(providerSettings.WarenpostInternationalAccountNumber))
                         throw new Exception("Warenpost international Accountnumber not defined");
                     return providerSettings.WarenpostInternationalAccountNumber;
+
                 default:
                     throw new Exception("Accountnumber not defined");
             }
-        }
-
-        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
-        {
-            throw new NotImplementedException();
         }
     }
 }

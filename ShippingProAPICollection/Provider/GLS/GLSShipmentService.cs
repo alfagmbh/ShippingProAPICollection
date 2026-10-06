@@ -1,8 +1,11 @@
+using System.Globalization;
+using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
+using Org.BouncyCastle.Crypto.Prng;
 using RestSharp;
 using RestSharp.Authenticators;
-using ShippingProAPICollection._Provider.DHL;
+using ShippingProAPICollection.Api.GLSTrackingAndTraceV1;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
@@ -194,45 +197,105 @@ namespace ShippingProAPICollection.Provider.GLS
             return new GLSValidationReponse() { Success = true, ValidationIssues = reponseIssues };
         }
 
+        private static readonly HttpClient _httpClient = new();
+#if DEBUG
+        private const string TrackingBaseUrl = "https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple";
+#else
+        private const string TrackingBaseUrl = "https://api.gls-group.net/track-and-trace-v1/tracking/simple";
+#endif
+
         public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
         {
+            string appId = "EnvRn1YVVxzWuZdkNa41ixPooKDPlAH4";
+            string appSecret = "FdGXeBFAqxRhlwcT";
+
+            var token = await GetAccessToken(appId, appSecret);
+
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
             string parcelIds = string.Join(",", parcelId);
-            RestResponse<DeliveryInfo> response = await CallApi<DeliveryInfo>(
-                new Uri(string.Format("{0}/tracking/deliveryinfo/parcelid/{1}?showLinks=false", providerSettings.ApiDomain, parcelIds)),
-                Method.Get,
-                null,
-                cancelToken);
 
-            if (response.Data != null)
+            var urlBuilder = new StringBuilder(TrackingBaseUrl)
+                .Append("/trackids/")
+                .Append(parcelIds);
+
+            var response = await _httpClient.GetAsync(
+                urlBuilder.ToString(),
+                cancelToken)
+                ?? throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE,
+                    $"Delivery info not available for the given parcel IDs {parcelIds}");
+
+            string responseContent = await response.Content.ReadAsStringAsync();
+            var parcelResponse = JsonConvert.DeserializeObject<ParcelsResponseDTO>(responseContent);
+            var parcels = parcelResponse?.Parcels.ToArray() ?? throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE,
+                $"Delivery info not available for the given parcel IDs {parcelIds}");
+
+            List<TrackParcelResponse> deliveryInfoList = new List<TrackParcelResponse>();
+
+            for (int i = 0; i < parcels.Length; i++)
             {
-                List<TrackParcelResponse> deliveryInfoList = new List<TrackParcelResponse>();   
-                for (int i = 0; i < response.Data.Parcels.Count(); i++)
+                var latestEvent = parcels[i].Events
+                                             .OrderByDescending(x => DateTime.Parse(x.EventDateTime, CultureInfo.InvariantCulture))
+                                                 .FirstOrDefault();
+
+                var trackParcelResponse = new TrackParcelResponse()
                 {
+                    ParcelNumber = parcels[i].Unitno,
+                    Status = parcels[i].Status.ToString(),
+                    ErrorMessage = parcels[i].ErrorMessage,
+                    LastEvent = latestEvent is not null ? JsonConvert.SerializeObject(latestEvent) : null,
+                };
 
-                    var parcel = response.Data.Parcels[i];
-                    for (int e = 0; e < parcel.Events.Count(); e++)
+                string json = JsonConvert.SerializeObject(trackParcelResponse, Formatting.Indented, new JsonSerializerSettings
+                {
+                    NullValueHandling = NullValueHandling.Ignore,
+                    ContractResolver = new DefaultContractResolver
                     {
-                        Event @event = parcel.Events[e];
-                        deliveryInfoList.Add(new TrackParcelResponse()
-                        {
-                            ParcelNumber = parcel.UnitNo,
-                            Status = parcel.Status.ToString(),
-                            ResponseCode = @event.Code,
-                            City = @event.City,
-                            PostalCode = @event.PostalCode,
-                            Country = @event.Country,
-                            Description = @event.Description,
-                            ErrorMessage = parcel.ErrorMessage
-                        });
+                        NamingStrategy = null
                     }
-                }
-                return deliveryInfoList;
-
+                });
+                deliveryInfoList.Add(trackParcelResponse);
             }
-
-            throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE, $"Delivery info not available for the given parcel IDs {parcelIds}");
+            return deliveryInfoList;
         }
-      
+
+#if DEBUG
+        private const string TokenUrl = "https://api-sandbox.gls-group.net/oauth2/v2/token";
+#else
+        private const string TokenUrl = "https://api.gls-group.net/oauth2/v2/token";
+#endif
+
+        private async Task<string> GetAccessToken(string appId, string appSecret)
+        {
+            string credentials = Convert.ToBase64String(
+                System.Text.Encoding.UTF8.GetBytes($"{appId}:{appSecret}"));
+
+            using (var request = new HttpRequestMessage(HttpMethod.Post, TokenUrl))
+            {
+                request.Headers.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
+
+                request.Headers.Accept.Add(
+                    new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+                request.Content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("grant_type", "client_credentials")
+                });
+
+                using (var response = await _httpClient.SendAsync(request))
+                {
+                    string responseContent = await response.Content.ReadAsStringAsync();
+
+                    if (!response.IsSuccessStatusCode)
+                        throw new HttpRequestException(
+                            $"Token request failed: {(int)response.StatusCode} {responseContent}");
+
+                    return (string)JsonConvert.DeserializeObject<dynamic>(responseContent)?.access_token;
+                }
+            }
+        }
 
         public async Task<uint> GetEstimatedDeliveryDays(RequestShipmentBase request, CancellationToken cancelToken)
         {

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Provider;
 using ShippingProAPICollection.Provider.GLS;
@@ -34,7 +35,6 @@ namespace ShippingProAPICollection.NUnitTests
                 EMail = "TEST@marketplace.amazon.de"
             };
             request.Validate();
-
 
             var result = (await shippingCollection.RequestLabel(request));
 
@@ -98,7 +98,6 @@ namespace ShippingProAPICollection.NUnitTests
                 ServiceType = GLSServiceType.NONE,
             };
             request.Validate();
-
 
             var result = (await shippingCollection.RequestLabel(request));
 
@@ -198,7 +197,6 @@ namespace ShippingProAPICollection.NUnitTests
                 var cancelResult = (await shippingCollection.CancelLabel("GLS", label.CancelId));
                 Assert.That(cancelResult == ShippingCancelResult.CANCELED);
             }
-
         }
 
         /// <summary>
@@ -227,8 +225,20 @@ namespace ShippingProAPICollection.NUnitTests
             request.Validate();
 
             var days = (await shippingCollection.GetEstimatedDeliveryDays(request));
-
         }
+        [Test]
+        public async Task TrackShippingLabel()
+        {
+            ShippingProAPICollectionService shippingCollection = _serviceProvider.GetRequiredService<ShippingProAPICollectionService>();
+            string trackingId = "QAS_0000002";
+            List<TrackParcelResponse> trackResult = (await shippingCollection.TrackLabels("GLS", [trackingId]));
 
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(trackResult.Count() == 1);
+                Assert.That(trackResult[0].ParcelNumber == trackingId);
+                Assert.That(trackResult[0].Status != null && trackResult[0].Status == "INPICKUP");
+            }
+        }
     }
 }

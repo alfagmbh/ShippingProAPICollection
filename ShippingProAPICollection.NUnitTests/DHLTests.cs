@@ -287,5 +287,17 @@ namespace ShippingProAPICollection.NUnitTests
             Assert.That(result.Count() == 1);
             Assert.That(result.FirstOrDefault()?.Labels[0].Length > 0);
         }
+
+        [Test]
+        public async Task TrackShippingLabel()
+        {
+            ShippingProAPICollectionService shippingCollection = _serviceProvider.GetRequiredService<ShippingProAPICollectionService>();
+            string contractId = "DHL";
+            string trackingNr = "00340433930440211852"; //
+            
+            var trackResult = (await shippingCollection.TrackLabels(contractId,[trackingNr], CancellationToken.None));
+            Assert.That(trackResult.Count() == 1);
+            Assert.That(trackResult.FirstOrDefault()?.ParcelNumber == trackingNr);
+        }
     }
 }
