@@ -206,10 +206,7 @@ namespace ShippingProAPICollection.Provider.GLS
 
         public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
         {
-            string appId = "EnvRn1YVVxzWuZdkNa41ixPooKDPlAH4";
-            string appSecret = "FdGXeBFAqxRhlwcT";
-
-            var token = await GetAccessToken(appId, appSecret);
+            var token = await GetAccessToken(providerSettings.ApplicationID, providerSettings.ApplicationSecret);
 
             _httpClient.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);

@@ -4,8 +4,8 @@
     {
         public string? ParcelNumber { get; set; } 
         public string? Status { get; set; }
-        public DateTime? EventDateTime = DateTime.UtcNow;
         public string? LastEvent { get; set; } 
         public string? ErrorMessage { get; set; } 
+        public DateTime? CreatedAt = DateTime.UtcNow;
     }
 }

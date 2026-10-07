@@ -11,6 +11,8 @@ namespace ShippingProAPICollection.Provider.GLS
         public required string ApiDomain { get; set; }
         public required string Username { get; set; }
         public required string Password { get; set; }
+        public required string ApplicationID { get; set; }
+        public required string ApplicationSecret { get; set; }
         public required string ContactID { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
     }

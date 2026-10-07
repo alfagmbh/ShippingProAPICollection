@@ -258,7 +258,7 @@ namespace ShippingProAPICollection.Provider.DHL
             {
                 var clientRequest = new RestRequest(new Uri(urlBuilder_.ToString(), UriKind.RelativeOrAbsolute), Method.Get);
 
-                clientRequest.AddHeader("DHL-API-Key".ToLower(CultureInfo.InvariantCulture), /*providerSettings.APIKey*/ "02I4mIrzvZJzlg1e9VHlf4LjCycmMome");
+                clientRequest.AddHeader("DHL-API-Key".ToLower(CultureInfo.InvariantCulture), providerSettings.APIKey);
 
                 if (!string.IsNullOrEmpty(providerSettings.APILanguage))
                 {
