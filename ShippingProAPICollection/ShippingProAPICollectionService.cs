@@ -97,12 +97,18 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException("Unknown shipping provider");
         }
 
-        public async Task<List<TrackParcelResponse>> TrackLabels(string contractID, string[] trackingIds, CancellationToken ct = default)
+        public async Task ProcessPushNotification(ParcelStatusChangeNotification notificationData, CancellationToken ct = default)
         {
-            if (providerServices.TryGetValue(contractID, out var service))
+
+            switch (notificationData)
             {
-                return await service.TrackLabels(trackingIds, ct);
+                case GLSParcelStatusChangeNotification:
+                   return await new GLSShipmentService(null, null).ProcessParcelStatusChangeNotification("", ct);
+                default:
+                    throw new InvalidOperationException("Unknown shipping provider");
             }
+
+
             throw new InvalidOperationException("Unknown shipping provider");
         }
 

@@ -1,5 +1,6 @@
 ﻿#pragma warning disable 1998
 
+using System.Net;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -9,20 +10,17 @@ using ShippingProAPICollection.RestApi.Entities;
 using ShippingProAPICollection.RestApi.Entities.DTOs;
 using ShippingProAPICollection.RestApi.Entities.Error;
 using ShippingProAPICollection.RestApi.Helper;
-using System.Net;
 
 namespace ShippingProAPICollection.RestApi.Controllers
 {
-
     [Route("api/[controller]")]
     [ApiController]
     public class ShipmentController(
         ShippingProAPICollectionService shippingProAPICollectionService,
         ShippingProAPICollectionSettings shippingProAPICollectionSettings,
         ApplicationSettingService applicationSettingService
-        ) : ControllerBase
+                                   ) : ControllerBase
     {
-
         /// <summary>
         /// Anfragen eines neuen Labels
         /// Request new shipping labels
@@ -47,7 +45,6 @@ namespace ShippingProAPICollection.RestApi.Controllers
             }).ToList();
 
             return CreatedAtAction("RequestShippingLabel", requestedLabels);
-
         }
 
         /// <summary>
@@ -194,17 +191,24 @@ namespace ShippingProAPICollection.RestApi.Controllers
             return new NoContentResult();
         }
 
-
         [HttpGet]
-        [Route("track")]
+        [Route("push/notification")]
         [EnableCors("Intern")]
         [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
         [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
         [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
-        public async Task<IActionResult> TrackLabels([FromBody, BindRequired] TrackLabelsRequest request)
+        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] ParcelStatusChangeNotification notificationData)
         {
-            var trackingResults = await shippingProAPICollectionService.TrackLabels(request.ContractID, request.TrackingNumbers);
-            return Ok(trackingResults);
+
+            try
+            {
+                await shippingProAPICollectionService.ProcessPushNotification(notificationData);
+                return Ok();
+            }
+            catch (Exception)
+            {
+                return StatusCode((int)HttpStatusCode.InternalServerError, new InternalServerErrorReponse("An error occurred while processing the request."));
+            }
         }
     }
 }

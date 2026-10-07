@@ -1,8 +1,6 @@
-using System.Globalization;
-using System.Text;
+using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
-using Org.BouncyCastle.Crypto.Prng;
 using RestSharp;
 using RestSharp.Authenticators;
 using ShippingProAPICollection.Api.GLSTrackingAndTraceV1;
@@ -16,8 +14,9 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
-using ShippingProAPICollection.Provider.GLS.Entities.ParcelInfo;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
+using System.Globalization;
+using System.Text;
 
 namespace ShippingProAPICollection.Provider.GLS
 {
@@ -197,104 +196,58 @@ namespace ShippingProAPICollection.Provider.GLS
             return new GLSValidationReponse() { Success = true, ValidationIssues = reponseIssues };
         }
 
+        #region parcel tracking
+
         private static readonly HttpClient _httpClient = new();
-#if DEBUG
-        private const string TrackingBaseUrl = "https://api-sandbox.gls-group.net/track-and-trace-v1/tracking/simple";
-#else
-        private const string TrackingBaseUrl = "https://api.gls-group.net/track-and-trace-v1/tracking/simple";
-#endif
+        private readonly MemoryCache _memoryCache = new(new MemoryCacheOptions());
+        private const string WebhookSubscriptionUrl = "https://api.gls-group.net/push-notification-v1/management/subscription/shippers";
 
-        public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
         {
-            var token = await GetAccessToken(providerSettings.ApplicationID, providerSettings.ApplicationSecret);
-
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-            string parcelIds = string.Join(",", parcelId);
-
-            var urlBuilder = new StringBuilder(TrackingBaseUrl)
-                .Append("/trackids/")
-                .Append(parcelIds);
-
-            var response = await _httpClient.GetAsync(
-                urlBuilder.ToString(),
-                cancelToken)
-                ?? throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE,
-                    $"Delivery info not available for the given parcel IDs {parcelIds}");
-
-            string responseContent = await response.Content.ReadAsStringAsync();
-            var parcelResponse = JsonConvert.DeserializeObject<ParcelsResponseDTO>(responseContent);
-            var parcels = parcelResponse?.Parcels.ToArray() ?? throw new GLSException(ShippingErrorCode.GLS_DELIVERY_INFO_NOT_AVAILABLE,
-                $"Delivery info not available for the given parcel IDs {parcelIds}");
-
-            List<TrackParcelResponse> deliveryInfoList = new List<TrackParcelResponse>();
-
-            for (int i = 0; i < parcels.Length; i++)
+            var requestBody = new
             {
-                var latestEvent = parcels[i].Events
-                                             .OrderByDescending(x => DateTime.Parse(x.EventDateTime, CultureInfo.InvariantCulture))
-                                                 .FirstOrDefault();
+                id = Guid.NewGuid().ToString(),
+                customerId = "2761234567",
+                contactId = "276abcdefg",
+                portalUsername = "JohnDoe",
+                portalPassword = "password123",
+                webhookUrl = "url" //todo replace with real webhook url
+            };
 
-                var trackParcelResponse = new TrackParcelResponse()
-                {
-                    ParcelNumber = parcels[i].Unitno,
-                    Status = parcels[i].Status.ToString(),
-                    ErrorMessage = parcels[i].ErrorMessage,
-                    LastEvent = latestEvent is not null ? JsonConvert.SerializeObject(latestEvent) : null,
-                };
+            var response = await CallApi<object>(
+                new Uri(WebhookSubscriptionUrl),
+                Method.Post,
+                requestBody,
+                cancelToken);
 
-                string json = JsonConvert.SerializeObject(trackParcelResponse, Formatting.Indented, new JsonSerializerSettings
-                {
-                    NullValueHandling = NullValueHandling.Ignore,
-                    ContractResolver = new DefaultContractResolver
-                    {
-                        NamingStrategy = null
-                    }
-                });
-                deliveryInfoList.Add(trackParcelResponse);
-            }
-            return deliveryInfoList;
+            return new WebHookSubsribeAttemptResponse()
+            {
+                IsSuccess = response.IsSuccessful,
+                Message = response.Content,
+                Exception = response.ErrorException
+            };
         }
 
-#if DEBUG
-        private const string TokenUrl = "https://api-sandbox.gls-group.net/oauth2/v2/token";
-#else
-        private const string TokenUrl = "https://api.gls-group.net/oauth2/v2/token";
-#endif
-
-        private async Task<string> GetAccessToken(string appId, string appSecret)
+        public async Task ProcessParcelStatusChangeNotification(string webhookDataAsJsonString, CancellationToken cancelToken)
         {
-            string credentials = Convert.ToBase64String(
-                System.Text.Encoding.UTF8.GetBytes($"{appId}:{appSecret}"));
-
-            using (var request = new HttpRequestMessage(HttpMethod.Post, TokenUrl))
+            //transform the webhook data into a model
+            var webhookData = JsonConvert.DeserializeObject<GLSParcelStatusChangeNotification>(webhookDataAsJsonString);
+            TrackParcelResponse? trackParcelResponse = new()
             {
-                request.Headers.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", credentials);
-
-                request.Headers.Accept.Add(
-                    new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
-
-                request.Content = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("grant_type", "client_credentials")
-                });
-
-                using (var response = await _httpClient.SendAsync(request))
-                {
-                    string responseContent = await response.Content.ReadAsStringAsync();
-
-                    if (!response.IsSuccessStatusCode)
-                        throw new HttpRequestException(
-                            $"Token request failed: {(int)response.StatusCode} {responseContent}");
-
-                    return (string)JsonConvert.DeserializeObject<dynamic>(responseContent)?.access_token;
-                }
-            }
+                ParcelNumber = webhookData?.ParcelId,
+                Status = webhookData?.ParcelStatus,
+                LastEvent = webhookData?.EventCode,
+                ErrorMessage = null,
+                CreatedAt = DateTime.TryParse(webhookData?.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
+            };
+            //send to rabbit mq
+            
         }
+
+        #endregion parcel tracking
 
         public async Task<uint> GetEstimatedDeliveryDays(RequestShipmentBase request, CancellationToken cancelToken)
+
         {
             // Api NotFound on current GLS api
             return 0;

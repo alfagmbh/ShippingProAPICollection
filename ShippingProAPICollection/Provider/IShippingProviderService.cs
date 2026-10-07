@@ -15,7 +15,7 @@ namespace ShippingProAPICollection.Provider
         public Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken);
 
         /// <summary>
-        /// Stornieren eines Versandlabels mit der Stornierungsnummer | 
+        /// Stornieren eines Versandlabels mit der Stornierungsnummer |
         /// Cancel shipping label
         /// </summary>
         /// <param name="cancelId"></param>
@@ -48,12 +48,21 @@ namespace ShippingProAPICollection.Provider
         public Task ConfirmShipment(string confirmId, CancellationToken cancelToken);
 
         public float GetMaxPackageWeight();
+
         /// <summary>
-        /// Track a shipment by its parcel ID
+        /// Subscribe to a webhook for tracking updates
         /// </summary>
-        /// <param name="parcelId"></param>
+        /// <param name="webhookUrl">The URL of the webhook to subscribe to</param>
+        /// <param name="cancelToken">A token to cancel the operation</param>
+        /// <returns></returns>
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken);
+
+        /// <summary>
+        /// Process incoming webhook data
+        /// </summary>
+        /// <param name="webhookData"></param>
         /// <param name="cancelToken"></param>
         /// <returns></returns>
-        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken);
+        public Task ProcessParcelStatusChangeNotification(string webhookDataAsJsonString, CancellationToken cancelToken);
     }
 }
