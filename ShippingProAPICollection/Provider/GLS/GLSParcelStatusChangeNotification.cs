@@ -4,8 +4,11 @@ using ShippingProAPICollection.Models.Entities;
 namespace ShippingProAPICollection.Provider.GLS
 {
     [JsonObject("statusChange")]
-    public class GLSParcelStatusChangeNotification : ParcelStatusChangeNotification
+    public class GLSParcelStatusChangeNotification : IParcelStatusChangeNotification
     {
+        [JsonIgnore]
+        public ShippingProviderType ShippingProviderType => ShippingProviderType.GLS;
+
         [JsonProperty("parcelId")]
         public string? ParcelId { get; set; }
 

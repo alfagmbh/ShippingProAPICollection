@@ -6,14 +6,12 @@ using ShippingProAPICollection.Provider;
 using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
-using ShippingProAPICollection.Provider.GLS.Entities.Validation;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
 
 namespace ShippingProAPICollection
 {
     public class ShippingProAPICollectionService
     {
-
         public Dictionary<string, IShippingProviderService> providerServices = new Dictionary<string, IShippingProviderService>();
 
         public ShippingProAPICollectionService(IMemoryCache _cache, ShippingProAPICollectionSettings providerSettings)
@@ -32,14 +30,19 @@ namespace ShippingProAPICollection
             {
                 case GLSSettings providerSettings:
                     return new GLSShipmentService(defaultShipFromAddress, providerSettings);
+
                 case DHLSettings providerSettings:
                     return new DHLShipmentService(defaultShipFromAddress, providerSettings);
+
                 case DPDSettings providerSettings:
                     return new DPDShipmentService(defaultShipFromAddress, providerSettings, _cache);
+
                 case TOFSettings providerSettings:
                     return new TOFShipmentService(defaultShipFromAddress, providerSettings, _cache);
+
                 case CustomProviderSettings providerSettings:
                     return providerSettings.CreateProviderService(defaultShipFromAddress, _cache);
+
                 default: throw new Exception("provider not available");
             }
         }
@@ -88,7 +91,6 @@ namespace ShippingProAPICollection
 
         public async Task<ShippingCancelResult> CancelLabel(string contractID, string cancelId, CancellationToken ct = default)
         {
-
             if (providerServices.TryGetValue(contractID, out var service))
             {
                 return await service.CancelLabel(cancelId, ct);
@@ -97,24 +99,32 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException("Unknown shipping provider");
         }
 
-        public async Task ProcessPushNotification(ParcelStatusChangeNotification notificationData, CancellationToken ct = default)
+        public async Task ProcessPushNotification(IParcelStatusChangeNotification notificationData, CancellationToken ct = default)
         {
-
-            switch (notificationData)
+            switch (notificationData.ShippingProviderType)
             {
-                case GLSParcelStatusChangeNotification:
-                   return await new GLSShipmentService(null, null).ProcessParcelStatusChangeNotification("", ct);
+                case ShippingProviderType.DHL:
+                    var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().FirstOrDefault();
+                    await serviceDHL.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    break;
+
+                case ShippingProviderType.DPD:
+                    var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().FirstOrDefault();
+                    await serviceDPD.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    break;
+
+                case ShippingProviderType.GLS:
+                    var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().FirstOrDefault();
+                    await serviceGLS.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    break;
+
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
             }
-
-
-            throw new InvalidOperationException("Unknown shipping provider");
         }
 
         public async Task Confirm(string contractID, string confirmId, CancellationToken ct = default)
         {
-
             if (providerServices.TryGetValue(contractID, out var service))
             {
                 await service.ConfirmShipment(confirmId, ct);
@@ -123,16 +133,22 @@ namespace ShippingProAPICollection
             {
                 throw new InvalidOperationException("Unknown shipping provider");
             }
-
         }
 
         public void ResetDPDAutToken()
         {
-            foreach (var item in providerServices.Where(x => x.Value.GetType() == typeof(DPDShipmentService)).Select(x => x.Value as DPDShipmentService))
+            var dpdServices = GetServiceProviderFromType<DPDShipmentService>();
+            foreach (var dpdService in dpdServices)
             {
-                if (item != null) item.ResetDPDAutToken();
+                dpdService.ResetDPDAutToken();
             }
         }
 
+        private T[] GetServiceProviderFromType<T>() where T : class
+        {
+            var service = providerServices.Where(x => x.Value.GetType() == typeof(T)).Select(x => x.Value as T).ToArray();
+            if (service.Length > 0) return service;
+            throw new InvalidOperationException("Service not found for the specified type.");
+        }
     }
 }

@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Provider;
+using ShippingProAPICollection.Provider.DPD;
+using ShippingProAPICollection.Provider.GLS;
 using ShippingProAPICollection.RestApi.Entities;
 using ShippingProAPICollection.RestApi.Entities.DTOs;
 using ShippingProAPICollection.RestApi.Entities.Error;
@@ -21,6 +23,8 @@ namespace ShippingProAPICollection.RestApi.Controllers
         ApplicationSettingService applicationSettingService
                                    ) : ControllerBase
     {
+        #region endpoints
+
         /// <summary>
         /// Anfragen eines neuen Labels
         /// Request new shipping labels
@@ -191,15 +195,37 @@ namespace ShippingProAPICollection.RestApi.Controllers
             return new NoContentResult();
         }
 
+        #endregion endpoints
+
+        #region push notification
+
         [HttpGet]
-        [Route("push/notification")]
+        [Route("push/notification/gls")]
         [EnableCors("Intern")]
         [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
         [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
         [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
-        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] ParcelStatusChangeNotification notificationData)
+        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] GLSParcelStatusChangeNotification notificationData)
         {
+            try
+            {
+                await shippingProAPICollectionService.ProcessPushNotification(notificationData);
+                return Ok();
+            }
+            catch (Exception)
+            {
+                return StatusCode((int)HttpStatusCode.InternalServerError, new InternalServerErrorReponse("An error occurred while processing the request."));
+            }
+        }
 
+        [HttpGet]
+        [Route("push/notification/dpd")]
+        [EnableCors("Intern")]
+        [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
+        [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
+        [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
+        public async Task<IActionResult> GetPushNotification([FromQuery, BindRequired] DPDParcelStatusChangeNotification notificationData)
+        {
             try
             {
                 await shippingProAPICollectionService.ProcessPushNotification(notificationData);
@@ -211,4 +237,6 @@ namespace ShippingProAPICollection.RestApi.Controllers
             }
         }
     }
+
+        #endregion push notification
 }

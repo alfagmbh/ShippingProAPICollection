@@ -8,6 +8,7 @@ using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DHL.Entities.VASService;
+using ShippingProAPICollection.Provider.GLS;
 using System.Globalization;
 
 namespace ShippingProAPICollection.Provider.DHL
@@ -216,95 +217,6 @@ namespace ShippingProAPICollection.Provider.DHL
             return providerSettings.MaxPackageWeight;
         }
 
-        public async Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
-        {
-            List<TrackParcelResponse> TrackLabels = new List<TrackParcelResponse>();
-            foreach (var request in parcelId)
-            {
-                var trackParcelResponse = new TrackParcelResponse();
-                TrackLabels.Add(trackParcelResponse);
-                try
-                {
-                    var response = await FetchPackage(request, cancelToken);
-                    var latestEvent = response.Shipments[0].Events?.OrderByDescending(e => e.Timestamp).FirstOrDefault();
-
-                    trackParcelResponse.ParcelNumber = response.Shipments[0].Id;
-                    trackParcelResponse.Status = JsonConvert.SerializeObject(response.Shipments[0].Status?.StatusCode);
-                    trackParcelResponse.LastEvent = JsonConvert.SerializeObject(latestEvent);
-
-                    string json = JsonConvert.SerializeObject(trackParcelResponse);
-                }
-                catch (Exception ex)
-                {
-                    trackParcelResponse.ErrorMessage = ex.Message;
-                }
-            }
-            throw new DHLException(ShippingErrorCode.NOT_FOUND, "No parcel found for tracking", new { payload = parcelId });
-        }
-
-        private async Task<DHLTrackingResponse> FetchPackage(string request, CancellationToken cancelToken)
-        {
-            var urlBuilder_ = new System.Text.StringBuilder();
-            var baseUrl = string.Format("https://api-eu.dhl.com/", providerSettings.ApiDomain);
-
-            urlBuilder_.Append(baseUrl != null ? baseUrl.TrimEnd('/') : "").Append("/track/shipments?");
-            urlBuilder_.Append("trackingNumber=").Append(request).Append("&");
-
-            urlBuilder_.Length--;
-
-            var clientOptions = new RestClientOptions(baseUrl);
-
-            using (RestClient client = new RestClient(clientOptions))
-            {
-                var clientRequest = new RestRequest(new Uri(urlBuilder_.ToString(), UriKind.RelativeOrAbsolute), Method.Get);
-
-                clientRequest.AddHeader("DHL-API-Key".ToLower(CultureInfo.InvariantCulture), providerSettings.APIKey);
-
-                if (!string.IsNullOrEmpty(providerSettings.APILanguage))
-                {
-                    clientRequest.AddHeader("accept-language".ToLower(CultureInfo.InvariantCulture), providerSettings.APILanguage);
-                }
-
-                RestResponse response = await client.ExecuteAsync(clientRequest, cancelToken).ConfigureAwait(false);
-
-                if (response.StatusCode == System.Net.HttpStatusCode.OK || response.StatusCode == System.Net.HttpStatusCode.MultiStatus)
-                {
-                    return JsonConvert.DeserializeObject<DHLTrackingResponse>(response.Content ?? "")
-
-                        ?? throw new DHLException(
-                            ShippingErrorCode.CANNOT_CONVERT_RESPONSE,
-                                "Cannot convert reponse to object",
-                                new { payload = request, respone = response.Content });
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
-                {
-                    var objectResponse_ = JsonConvert.DeserializeObject<LabelDataResponse>(response.Content ?? "");
-                    if (objectResponse_ == null)
-                    {
-                        throw new DHLException(ShippingErrorCode.CANNOT_CONVERT_RESPONSE, "Cannot convert reponse to object", new { payload = request, respone = response.Content });
-                    }
-
-                    throw new DHLException(ShippingErrorCode.BAD_REQUEST_ERROR, objectResponse_.Items?.FirstOrDefault()?.ValidationMessages.FirstOrDefault()?.ValidationMessage ?? "Unknow message", new { payload = request, respone = response.Content });
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                {
-                    throw new DHLException(ShippingErrorCode.UNAUTHORIZED, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                {
-                    throw new DHLException(ShippingErrorCode.TO_MANY_REQUESTS, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
-                }
-                else if (response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
-                {
-                    throw new DHLException(ShippingErrorCode.INTERNAL_SERVER_ERROR, $"Request reponsed with HTTP status code {(int)response.StatusCode}", new { payload = request, respone = response.Content });
-                }
-                else
-                {
-                    throw new DHLException(ShippingErrorCode.UNKNOW, "The HTTP status code of the response was not expected (" + (int)response.StatusCode + ").", new { payload = request, respone = response.Content });
-                }
-            }
-        }
-
         /// <summary>
         /// Create the DHL request body informations
         /// </summary>
@@ -502,6 +414,37 @@ namespace ShippingProAPICollection.Provider.DHL
                 default:
                     throw new Exception("Accountnumber not defined");
             }
+        }
+
+        internal async Task ProcessParcelStatusChangeNotification(string v, CancellationToken ct)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
+        {
+            throw new NotImplementedException();
+        }
+
+        public async Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        {
+            if (parcelStatusChangeNotification is not DHLParcelStatusChangeNotification dhlParcelStatusChangeNotification ||
+                dhlParcelStatusChangeNotification is null ||
+                dhlParcelStatusChangeNotification.Shipments is null || 
+                dhlParcelStatusChangeNotification.Shipments.Count == 0)
+  
+                throw new ArgumentException("Invalid data");
+
+            // Process the parcel status change notification
+            ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent()
+            {
+                Status = DHLTrackingStatusTypes.GetTrackingStatusType(dhlParcelStatusChangeNotification.Shipments[0].Status.StatusCode ?? "").ToString(),
+                APIValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification),
+                ParcelNumber = dhlParcelStatusChangeNotification.Shipments[0].Id,
+            };
+            // Send to rabbitmq
+
+
         }
     }
 }

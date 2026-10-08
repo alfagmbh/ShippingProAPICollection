@@ -3,7 +3,6 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using RestSharp;
 using RestSharp.Authenticators;
-using ShippingProAPICollection.Api.GLSTrackingAndTraceV1;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
@@ -15,8 +14,6 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
-using System.Globalization;
-using System.Text;
 
 namespace ShippingProAPICollection.Provider.GLS
 {
@@ -228,20 +225,23 @@ namespace ShippingProAPICollection.Provider.GLS
             };
         }
 
-        public async Task ProcessParcelStatusChangeNotification(string webhookDataAsJsonString, CancellationToken cancelToken)
+        public async Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
+            if (parcelStatusChangeNotification is not GLSParcelStatusChangeNotification glsParcelStatusChangeNotification ||
+                glsParcelStatusChangeNotification is null ||
+                glsParcelStatusChangeNotification.ParcelId is null ||
+                glsParcelStatusChangeNotification.ParcelStatus is null)
+                throw new ArgumentException("Invalid data");
+
             //transform the webhook data into a model
-            var webhookData = JsonConvert.DeserializeObject<GLSParcelStatusChangeNotification>(webhookDataAsJsonString);
-            TrackParcelResponse? trackParcelResponse = new()
+            ParcelTrackingEvent? trackParcelResponse = new()
             {
-                ParcelNumber = webhookData?.ParcelId,
-                Status = webhookData?.ParcelStatus,
-                LastEvent = webhookData?.EventCode,
-                ErrorMessage = null,
-                CreatedAt = DateTime.TryParse(webhookData?.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
+                ParcelNumber = glsParcelStatusChangeNotification?.ParcelId,
+                Status = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification?.ParcelStatus ?? string.Empty).ToString(),
+                APIValue = glsParcelStatusChangeNotification?.EventCode,
+                CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification?.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
             };
             //send to rabbit mq
-            
         }
 
         #endregion parcel tracking

@@ -231,7 +231,7 @@ namespace ShippingProAPICollection.NUnitTests
         {
             ShippingProAPICollectionService shippingCollection = _serviceProvider.GetRequiredService<ShippingProAPICollectionService>();
             string trackingId = "QAS_0000002";
-            List<TrackParcelResponse> trackResult = (await shippingCollection.TrackLabels("GLS", [trackingId]));
+            List<ParcelTrackingEvent> trackResult = (await shippingCollection.TrackLabels("GLS", [trackingId]));
 
             using (Assert.EnterMultipleScope())
             {

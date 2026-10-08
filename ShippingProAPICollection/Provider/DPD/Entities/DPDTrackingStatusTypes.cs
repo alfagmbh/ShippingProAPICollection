@@ -28,7 +28,7 @@ namespace ShippingProAPICollection.Provider.DPD.Entities
         public static TrackingStatusType GetTrackingStatusType(string dpdTrackingStatusType)
             => _trackingStatusTypes.TryGetValue(dpdTrackingStatusType, out var trackingStatusType)
             ? trackingStatusType
-            : throw new ArgumentException($"Invalid DPD tracking status type: {dpdTrackingStatusType}");
+            : TrackingStatusType.UNKNOWN;
     }
 
     public enum DPDTrackingStatusType

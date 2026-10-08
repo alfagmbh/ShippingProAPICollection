@@ -3,6 +3,7 @@
 using DPDLoginService2_0;
 using DPDShipmentService4_4;
 using Microsoft.Extensions.Caching.Memory;
+using Newtonsoft.Json;
 using RestSharp;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
@@ -10,7 +11,7 @@ using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD.Entities;
-using ShippingProAPICollection.Provider.GLS.Entities.Validation;
+using ShippingProAPICollection.Provider.GLS;
 
 namespace ShippingProAPICollection.Provider.DPD
 {
@@ -87,7 +88,6 @@ namespace ShippingProAPICollection.Provider.DPD
             }
 
             return labels;
-
         }
 
         public async Task<ShippingCancelResult> CancelLabel(string cancelId, CancellationToken cancelToken = default)
@@ -123,14 +123,27 @@ namespace ShippingProAPICollection.Provider.DPD
         {
             return providerSettings.MaxPackageWeight;
         }
-        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+
+        public async Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
+            if (parcelStatusChangeNotification is not DPDParcelStatusChangeNotification dpdParcelStatusChangeNotification ||
+               dpdParcelStatusChangeNotification is null ||
+               dpdParcelStatusChangeNotification.ParcelNumber is null ||
+               dpdParcelStatusChangeNotification.Status is null)
+                throw new ArgumentException("Invalid data");
 
-            string url = string.Format("https://public-{0}.dpd.com/services/ParcelService/v1/", providerSettings.ApiDomain);
+            // Process the parcel status change notification here
+            ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent
+            {
+                ParcelNumber = dpdParcelStatusChangeNotification.ParcelNumber,
+                Status = DPDTrackingStatusTypes.GetTrackingStatusType(dpdParcelStatusChangeNotification.Status).ToString(),
+                APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
+            };
+            // Send to RabbitMq
 
-
-            throw new DPDException(ShippingErrorCode.DPD_DELIVERY_INFO_NOT_AVAILABLE, "DPD delivery info not available");
+            return;
         }
+
         private storeOrders CreateRequestModel(DPDShipmentRequestModel request)
         {
             var order = new storeOrders();
@@ -139,17 +152,16 @@ namespace ShippingProAPICollection.Provider.DPD
             {
                 printOption = new printOption[]
                 {
-                            new printOption()
-                            {
-                                paperFormat = printOptionPaperFormat.A6,
-                                paperFormatSpecified = true,
-                                startPosition = startPosition.UPPER_LEFT,
-                                startPositionSpecified = true,
-                            }
+                    new printOption()
+                    {
+                        paperFormat = printOptionPaperFormat.A6,
+                        paperFormatSpecified = true,
+                        startPosition = startPosition.UPPER_LEFT,
+                        startPositionSpecified = true,
+                    }
                 },
                 splitByParcel = true,
             };
-
 
             var shipmentServiceData = new shipmentServiceData();
 
@@ -223,10 +235,9 @@ namespace ShippingProAPICollection.Provider.DPD
                         returns = request.ServiceType == DPDServiceType.SHOPRETURN,
                         returnsSpecified = request.ServiceType == DPDServiceType.SHOPRETURN,
                         hazardousLimitedQuantities = request.ContainsLimitedQuantities,
-                        hazardousLimitedQuantitiesSpecified = request.ContainsLimitedQuantities,  
+                        hazardousLimitedQuantitiesSpecified = request.ContainsLimitedQuantities,
                     }
-                );
-
+                           );
             }
 
             shipmentServiceData.parcels = parcels.ToArray();
@@ -267,7 +278,6 @@ namespace ShippingProAPICollection.Provider.DPD
         /// <exception cref="ShippingProviderErrorCodeException"></exception>
         private async Task<string> LoginToDPD(CancellationToken cancelToken = default)
         {
-
             string url = string.Format("https://public-{0}.dpd.com/services/LoginService/V2_0/", providerSettings.ApiDomain);
             LoginServiceClient loginClient = new LoginServiceClient(LoginServiceClient.EndpointConfiguration.LoginService_2_0_SOAP, url);
 
@@ -357,7 +367,15 @@ namespace ShippingProAPICollection.Provider.DPD
 
                 return new DPDException(ShippingErrorCode.DPD_SHIPMENT_REQUEST_ERROR, "Unknow", request);
             }
+        }
 
+        internal async Task ProcessParcelStatusChangeNotification(DPDParcelStatusChangeNotification parcelStatusChangeNotification, CancellationToken ct)
+        {
+        }
+
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
+        {
+            throw new NotImplementedException();
         }
 
     }

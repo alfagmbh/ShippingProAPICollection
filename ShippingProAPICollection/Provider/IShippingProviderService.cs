@@ -1,5 +1,6 @@
 ﻿using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
+using ShippingProAPICollection.Provider.GLS;
 
 namespace ShippingProAPICollection.Provider
 {
@@ -63,6 +64,6 @@ namespace ShippingProAPICollection.Provider
         /// <param name="webhookData"></param>
         /// <param name="cancelToken"></param>
         /// <returns></returns>
-        public Task ProcessParcelStatusChangeNotification(string webhookDataAsJsonString, CancellationToken cancelToken);
+        public Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
     }
 }

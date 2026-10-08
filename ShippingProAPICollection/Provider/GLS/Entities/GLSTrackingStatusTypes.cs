@@ -24,7 +24,7 @@ namespace ShippingProAPICollection.Provider.GLS.Entities
         public static TrackingStatusType GetTrackingStatusType(string glsTrackingStatusType)
             => _trackingStatusTypes.TryGetValue(glsTrackingStatusType, out var trackingStatusType)
             ? trackingStatusType
-            : throw new ArgumentException($"Invalid GLS tracking status type: {glsTrackingStatusType}");
+            : TrackingStatusType.UNKNOWN;
     }
 
     public enum GLSTrackingStatusType

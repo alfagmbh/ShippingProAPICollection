@@ -424,7 +424,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             SaveTOFLoginStorages();
         }
 
-        public Task<List<TrackParcelResponse>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
+        public Task<List<ParcelTrackingEvent>> TrackLabels(string[] parcelId, CancellationToken cancelToken)
         {
             throw new NotImplementedException();
         }

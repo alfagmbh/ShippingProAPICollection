@@ -6,6 +6,11 @@ namespace ShippingProAPICollection.Models.Entities
 {
     public enum TrackingStatusType
     {
-        DELIVERED, INDELIVERY, TRANSIT, CANCELLED, FAILED
+        DELIVERED, 
+        INDELIVERY, 
+        TRANSIT, 
+        CANCELLED, 
+        FAILED,
+        UNKNOWN
     }
 }
