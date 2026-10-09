@@ -14,19 +14,22 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
+using ShippingProAPICollection.RabbitMq;
 
 namespace ShippingProAPICollection.Provider.GLS
 {
     public class GLSShipmentService : IShippingProviderService
     {
         private string apiContentType = "application/glsVersion1+json";
-        private GLSSettings providerSettings = null!;
-        private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
+        private readonly GLSSettings providerSettings = null!;
+        private readonly ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
+        private readonly RabbitMqConnector _rabbitMqConnector;
 
-        public GLSShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, GLSSettings providerSettings)
+        public GLSShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, GLSSettings providerSettings, RabbitMqConnector rabbitMqConnector)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
-            this.providerSettings = providerSettings;
+            this.providerSettings = providerSettings; 
+            this._rabbitMqConnector = rabbitMqConnector;    
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -242,6 +245,10 @@ namespace ShippingProAPICollection.Provider.GLS
                 CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification?.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
             };
             //send to rabbit mq
+            await _rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+            {
+                Event = trackParcelResponse
+            }, cancelToken);
         }
 
         #endregion parcel tracking

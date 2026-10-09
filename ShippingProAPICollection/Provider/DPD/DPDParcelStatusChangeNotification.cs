@@ -30,7 +30,7 @@ namespace ShippingProAPICollection.Provider.DPD
         public string? Status { get; set; }
 
         [FromQuery(Name = "statusdate")]
-        private string? StatusDateRaw { get; set; }
+        public string? StatusDateRaw { get; set; }
 
         [JsonIgnore]
         public DateTime? StatusDate =>

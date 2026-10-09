@@ -1,87 +1,119 @@
-﻿using System.Net;
+﻿using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
+using ShippingProAPICollection.Models;
+using System.ComponentModel.DataAnnotations;
+using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
-using Org.BouncyCastle.Pqc.Crypto.Lms;
-using RabbitMQ.Client;
-using ShippingProAPICollection._Provider.DHL;
-using ShippingProAPICollection.Models;
 
 namespace ShippingProAPICollection.RabbitMq
 {
-    internal class RabbitMqService
+    public class RabbitMqConnector(IOptions<RabbitMqSecrets> options, CancellationToken cancellationToken) : IDisposable
     {
-        #region Fields
+        private readonly LinkedTokenWithTimeout _timeoutToken = new LinkedTokenWithTimeout(TimeSpan.FromMinutes(1), cancellationToken);
+        private readonly RabbitMqSecrets _secrets = options.Value;
 
-        private const string TargetQueue = "ALFATOOLS";
-        private const string JobQueue = "SHIPPING_PRO_API";
-
-        private string RabbitMqUser = "";
-        private string RabbitMqPassword = "";
-        private string RabbitMqHostname = "";
-        private uint RabbitMqPort = 5672;
-        private string RabbitMqVirtualHost = "";
-
-        #endregion Fields
+        #region Public Methods
 
         public async Task AddTaskToQueueAsync(TrackingEvent eventData, CancellationToken cancellationToken)
         {
-            var settings = new JsonSerializerSettings
-            {
-                Converters = { new StringEnumConverter() }
-            };
-
-            string jsonMessage = JsonConvert.SerializeObject(eventData, settings);
-
             LocalRabbitMqEvent ev = new LocalRabbitMqEvent()
             {
-                Body = jsonMessage,
+                Body = JsonConvert.SerializeObject(eventData, new JsonSerializerSettings
+                {
+                    Converters = { new StringEnumConverter() }
+                })
             };
 
-            await PublishLocalEventsAsync(ev, cancellationToken);
+            try
+            {
+                await PublishLocalEventsAsync(ev, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new RabbitMqException("Error publishing event", ex);
+            }
         }
 
-        public async Task PublishLocalEventsAsync(LocalRabbitMqEvent localEvent, CancellationToken cancellationToken)
+        public void Dispose()
         {
-            using var token = CreateLinkedTokenWithTimeout(TimeSpan.FromMinutes(1), cancellationToken);
+            _timeoutToken?.Dispose();
+        }
 
-            using (IConnection _connection = await BuildConnectionAsync(token.Token))
+        #endregion Public Methods
+
+        #region Private Methods
+
+        private async Task PublishLocalEventsAsync(LocalRabbitMqEvent localEvent, CancellationToken cancellationToken)
+        {
+            const int maxAttempts = 3;
+
+            var ct = _timeoutToken.Token;
+
+            // Idealerweise eine langlebige, injizierte Connection statt BuildConnectionAsync pro Aufruf
+            await using IConnection connection = await BuildConnectionAsync(ct);
+
+            var options = new CreateChannelOptions(
+                publisherConfirmationsEnabled: true,
+                publisherConfirmationTrackingEnabled: true);
+
+            await using IChannel channel = await connection.CreateChannelAsync(options, ct);
+
+            // Einmalig verschlüsseln, damit CorrelationId über Retries stabil bleibt
+            var (encrypted, correlationId) = new RabbitPayloadCipher(_secrets.PrivatePassword).Encrypt(localEvent.Body);
+            byte[] body = Encoding.UTF8.GetBytes(encrypted);
+
+            var properties = new BasicProperties
             {
-                var option = new CreateChannelOptions(publisherConfirmationsEnabled: true,
-                                     publisherConfirmationTrackingEnabled: true);
+                MessageId = localEvent.Id,
+                CorrelationId = correlationId,
+                Persistent = true
+            };
 
-                using (IChannel _channel = await _connection.CreateChannelAsync(option, token.Token))
+            string routingKey = BuildQueueName(_secrets.JobQueue);
+
+            while (true)
+            {
+                try
                 {
-                    PublishTracker tracker = new PublishTracker();
+                    // Wartet bei aktiviertem Tracking automatisch auf das Broker-Ack
+                    await channel.BasicPublishAsync(
+                        exchange: "",
+                        routingKey: routingKey,
+                        mandatory: true,
+                        basicProperties: properties,
+                        body: body,
+                        cancellationToken: ct);
 
-                    _channel.BasicNacksAsync += async (sender, e) =>
+                    localEvent.IsPublished = true;
+                    return;
+                }
+                catch (PublishException ex) when (ex.IsReturn)
+                {
+                    // Nachricht war nicht routbar (z. B. Queue existiert nicht) – Retry bringt nichts
+                    throw new InvalidOperationException(
+                        $"Event {localEvent.Id} konnte nicht geroutet werden (Queue '{routingKey}').", ex);
+                }
+                catch (PublishException ex)
+                {
+                    localEvent.TriesToPublish++;
+                    if (localEvent.TriesToPublish >= maxAttempts)
                     {
-                        tracker.OnNack();
-                        if (tracker._localRabbitEvent.TriesToPublish > 3)
-                        {
-                            throw new Exception("Unable to publish event after 3 attempts.");
-                        }
-                        await PublishEventAsync(_channel, tracker._localRabbitEvent, tracker, new RabbitPayloadCipher(), token.Token);
-                    };
+                        throw new InvalidOperationException(
+                            $"Event {localEvent.Id} nach {maxAttempts} Versuchen nicht veröffentlicht.", ex);
+                    }
 
-                    _channel.BasicAcksAsync += (sender, e) =>
-                    {
-                        tracker.OnAck();
-                        return Task.CompletedTask;
-                    };
-
-                    RabbitPayloadCipher payloadCipher = new RabbitPayloadCipher();
-
-                    await PublishEventAsync(_channel, localEvent, tracker, payloadCipher, token.Token);
+                    await Task.Delay(TimeSpan.FromMilliseconds(200 * localEvent.TriesToPublish), ct);
                 }
             }
         }
 
-        private static string BuildQueueName(string q)
+        private string BuildQueueName(string q)
         {
 #if RELEASE
             return q;
@@ -90,7 +122,7 @@ namespace ShippingProAPICollection.RabbitMq
 #endif
         }
 
-        public static LinkedTokenWithTimeout CreateLinkedTokenWithTimeout(TimeSpan timeSpan, CancellationToken cancellationToken)
+        public LinkedTokenWithTimeout CreateLinkedTokenWithTimeout(TimeSpan timeSpan, CancellationToken cancellationToken)
         {
             if (timeSpan <= TimeSpan.Zero)
             {
@@ -100,66 +132,43 @@ namespace ShippingProAPICollection.RabbitMq
             return new LinkedTokenWithTimeout(timeSpan, cancellationToken);
         }
 
-        private async Task PublishEventAsync(IChannel channel, LocalRabbitMqEvent rabbitEvent, PublishTracker tracker, RabbitPayloadCipher payloadCipher, CancellationToken cancellationToken)
-        {
-            var (bodyEncrypt, correlationId) = payloadCipher.Encrypt(rabbitEvent.Body);
-
-            // Konvertiere die JSON-Nachricht in ein Byte-Array
-            byte[] body = Encoding.UTF8.GetBytes(bodyEncrypt);
-
-            var properties = new BasicProperties();
-
-            properties.MessageId = rabbitEvent.Id;
-            properties.CorrelationId = correlationId;
-            tracker.Track(rabbitEvent);
-
-            // Veröffentliche die Nachricht in die Queue
-
-            await channel.BasicPublishAsync(exchange: "", routingKey: BuildQueueName(JobQueue), true, basicProperties: properties, body: body, cancellationToken);
-        }
-
         private async Task<IConnection> BuildConnectionAsync(CancellationToken cancellationToken)
         {
-            try
+            if (
+                String.IsNullOrEmpty(_secrets.RabbitMqUser) ||
+                String.IsNullOrEmpty(_secrets.RabbitMqPassword) ||
+                String.IsNullOrEmpty(_secrets.RabbitMqHostname) ||
+                _secrets.RabbitMqPort == 0 ||
+                String.IsNullOrEmpty(_secrets.RabbitMqVirtualHost)
+               )
             {
-                if (
-                    String.IsNullOrEmpty(RabbitMqUser) ||
-                    String.IsNullOrEmpty(RabbitMqPassword) ||
-                    String.IsNullOrEmpty(RabbitMqHostname) ||
-                    RabbitMqPort == 0 ||
-                    String.IsNullOrEmpty(RabbitMqVirtualHost)
-                   )
+                throw new("RabbitMQ Einstellungen nicht vollständig vorhanden. Connection kann nicht aufgebaut werden.");
+            }
+
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+
+            var connection = await new ConnectionFactory()
+            {
+                Uri = new Uri($"amqps://{_secrets.RabbitMqUser}:{_secrets.RabbitMqPassword}@{_secrets.RabbitMqHostname}:{_secrets.RabbitMqPort}/{_secrets.RabbitMqVirtualHost}"),
+                Ssl = new SslOption
                 {
-                    throw new("RabbitMQ Einstellungen nicht vollständig vorhanden. Connection kann nicht aufgebaut werden.");
+                    Enabled = true,
+                    Version = SslProtocols.Tls12,
+                    ServerName = _secrets.RabbitMqHostname,
+                    AcceptablePolicyErrors = SslPolicyErrors.RemoteCertificateChainErrors |
+                                             SslPolicyErrors.RemoteCertificateNameMismatch |
+                                             SslPolicyErrors.RemoteCertificateNotAvailable,
                 }
-
-                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-
-                var connection = await new ConnectionFactory()
-                {
-                    Uri = new Uri($"amqps://{RabbitMqUser}:{RabbitMqPassword}@{RabbitMqHostname}:{RabbitMqPort}/{RabbitMqVirtualHost}"),
-                    Ssl = new SslOption
-                    {
-                        Enabled = true,
-                        Version = SslProtocols.Tls12,
-                        ServerName = RabbitMqHostname,
-                        AcceptablePolicyErrors = SslPolicyErrors.RemoteCertificateChainErrors |
-                                                 SslPolicyErrors.RemoteCertificateNameMismatch |
-                                                 SslPolicyErrors.RemoteCertificateNotAvailable,
-                    }
-                }.CreateConnectionAsync(cancellationToken);
-                return connection;
-            }
-            catch (Exception ex)
-            {
-                throw;
-            }
+            }.CreateConnectionAsync(cancellationToken);
+            return connection;
         }
+
+        #endregion Private Methods
     }
 
     #region Private Helper Types
 
-    public class TrackingEvent
+    public sealed class TrackingEvent
     {
         [JsonProperty("event_code")]
         public string EventType = "PARCEL_TRACKING_INFO";
@@ -200,9 +209,9 @@ namespace ShippingProAPICollection.RabbitMq
         }
     }
 
-    internal sealed class RabbitPayloadCipher
+    internal sealed class RabbitPayloadCipher(string privatePassword)
     {
-        private readonly RabbitSecurity _security = new();
+        private readonly RabbitSecurity _security = new(privatePassword);
 
         public (string EncryptedBody, string CorrelationId) Encrypt(string plainBody)
         {
@@ -218,7 +227,7 @@ namespace ShippingProAPICollection.RabbitMq
         }
     }
 
-    internal class LocalRabbitMqEvent
+    internal sealed class LocalRabbitMqEvent
     {
         public string Id { get; } = Guid.NewGuid().ToString();
         public string Body { get; set; }
@@ -230,18 +239,18 @@ namespace ShippingProAPICollection.RabbitMq
 
     #region RabbitSecurity
 
-    internal class RabbitSecurity
+    public sealed class RabbitSecurity
     {
         #region Fields
 
-        private const string privatePassword = "*8UG^x*F~J:ragYaYJJzr.E";
+        //private const string privatePassword = "*8UG^x*F~J:ragYaYJJzr.E";
         private byte[] privateKey;
 
         #endregion Fields
 
         #region Constructor
 
-        public RabbitSecurity()
+        public RabbitSecurity(string privatePassword)
         {
             SHA256 mySHA256 = SHA256.Create();
             privateKey = mySHA256.ComputeHash(Encoding.ASCII.GetBytes(privatePassword));
@@ -365,7 +374,22 @@ namespace ShippingProAPICollection.RabbitMq
         #endregion Public API
     }
 
+    public sealed class RabbitMqSecrets
+    {
+        public const string SectionName = "RabbitMq";
+        [Required] public string TargetQueue { get; set; } = null!;
+        [Required] public string JobQueue { get; set; } = null!;
+        [Required] public string RabbitMqUser { get; set; } = null!;
+        [Required] public string RabbitMqPassword { get; set; } = null!;
+        [Required] public string RabbitMqHostname { get; set; } = null!;
+        [Range(1, 65535)] public uint RabbitMqPort { get; set; }
+        [Required] public string RabbitMqVirtualHost { get; set; } = null!;
+        [Required] public string PrivatePassword { get; set; } = null!;
+    }
+
     #endregion RabbitSecurity
+
+    #region Lifetime Management
 
     public sealed class LinkedTokenWithTimeout : IDisposable
     {
@@ -402,4 +426,17 @@ namespace ShippingProAPICollection.RabbitMq
 
         #endregion Public API
     }
+
+    public class RabbitMqException : Exception
+    {
+        public RabbitMqException(string message) : base(message)
+        {
+        }
+
+        public RabbitMqException(string message, Exception innerException) : base(message, innerException)
+        {
+        }
+    }
+
+    #endregion Lifetime Management
 }

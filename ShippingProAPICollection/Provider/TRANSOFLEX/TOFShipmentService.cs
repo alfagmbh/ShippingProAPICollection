@@ -15,7 +15,6 @@ using ShippingProAPICollection.Provider.TRANSOFLEX.Entities.Logout;
 
 namespace ShippingProAPICollection.Provider.TRANSOFLEX
 {
-
     public class TOFShipmentService : IShippingProviderService
     {
         private readonly IMemoryCache _cache;
@@ -102,7 +101,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 shipmentRequest,
                 BodyType.XML,
                 cancelToken
-                );
+                                                                                                   );
 
             HTTPReponseUtils.CheckHttpResponse<TOFException>("", shipmentRequest, response);
 
@@ -127,9 +126,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 }
             }
 
-
             return createdLabels;
-
         }
 
         public async Task<ShippingCancelResult> CancelLabel(string cancelId, CancellationToken cancelToken = default)
@@ -146,7 +143,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 cancelRequest,
                 BodyType.XML,
                 cancelToken
-                );
+                                                                                                   );
 
             HTTPReponseUtils.CheckHttpResponse<TOFException>(response.Content ?? "Unknow", cancelRequest, response);
             return ShippingCancelResult.CANCELED;
@@ -176,7 +173,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 cancelRequest,
                 BodyType.XML,
                 cancelToken
-                );
+                                                                                                   );
 
             HTTPReponseUtils.CheckHttpResponse<TOFException>(response.Content ?? "Unknow", cancelRequest, response);
         }
@@ -203,7 +200,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 body,
                 BodyType.XML,
                 cancelToken
-            );
+                                                                                       );
 
             if (!(response.StatusCode == System.Net.HttpStatusCode.OK || response.StatusCode == System.Net.HttpStatusCode.Unauthorized))
             {
@@ -236,7 +233,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 body,
                 BodyType.XWWWFORM,
                 cancelToken
-            );
+                                                                                   );
 
             if (response.Data == null) throw new TOFException(ShippingErrorCode.UNKNOW, "No Data available in response", new { payload = body, response = response.Content });
             HTTPReponseUtils.CheckHttpResponse<TOFException>(response.Data.Message ?? "Unbekannter Fehler", body, response);
@@ -245,7 +242,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
                 String.IsNullOrEmpty(response.Data.Message) ||
                 !(response.Data.Message.Equals("Success")) ||
                 String.IsNullOrEmpty(response.Data.SessionToken)
-            ) throw new TOFException(ShippingErrorCode.TOF_LOGIN_ERROR, "Login to TOF was not successful: " + response.Data.Message);
+               ) throw new TOFException(ShippingErrorCode.TOF_LOGIN_ERROR, "Login to TOF was not successful: " + response.Data.Message);
 
             AddSessionTokenToStorage(response.Data.SessionToken);
 
@@ -310,7 +307,6 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             var response = await client.ExecuteAsync<T>(clientRequest, cancelToken).ConfigureAwait(false);
 
             return response;
-
         }
 
         /// <summary>
@@ -333,7 +329,6 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             }
 
             return login.SessionToken;
-
         }
 
         /// <summary>
@@ -379,10 +374,10 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             return [pdfBytes];
         }
 
-
         #region Storage
 
-        string tofStorageFileName = "TOFStorage.json";
+        private string tofStorageFileName = "TOFStorage.json";
+
         private void SaveTOFLoginStorages()
         {
             IEnumerable<TOFLoginStorage> storages = loginStorage.Select(x => x.Value);
@@ -429,8 +424,17 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             throw new NotImplementedException();
         }
 
-        #endregion
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
+        {
+            throw new NotImplementedException();
+        }
 
+        public Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? notificationData, CancellationToken cancelToken)
+        {
+            throw new TOFException(ShippingErrorCode.NOT_AVAILABLE, "Fehler beim Verarbeiten der ParcelStatusChangeNotification");
+        }
+
+        #endregion Storage
     }
 
     public enum BodyType

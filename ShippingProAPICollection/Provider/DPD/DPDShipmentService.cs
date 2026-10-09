@@ -9,23 +9,24 @@ using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
-using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD.Entities;
-using ShippingProAPICollection.Provider.GLS;
+using ShippingProAPICollection.RabbitMq;
 
 namespace ShippingProAPICollection.Provider.DPD
 {
     public class DPDShipmentService : IShippingProviderService
     {
         private readonly IMemoryCache _cache;
-        private DPDSettings providerSettings = null!;
-        private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
+        private readonly DPDSettings providerSettings = null!;
+        private readonly ShippingProAPIShipFromAddress defaultShipFromAddress = null!;          
+        private readonly RabbitMqConnector _rabbitMqConnector;   
 
-        public DPDShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DPDSettings providerSettings, IMemoryCache cache)
+        public DPDShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DPDSettings providerSettings, IMemoryCache cache, RabbitMqConnector rabbitMqConnector)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
             this.providerSettings = providerSettings;
             _cache = cache;
+            _rabbitMqConnector = rabbitMqConnector;
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -108,7 +109,7 @@ namespace ShippingProAPICollection.Provider.DPD
 
         public async Task ConfirmShipment(string parcelId, CancellationToken cancelToken)
         {
-            throw new DHLException(ShippingErrorCode.NOT_AVAILABLE, "Feature not available for DPD");
+            throw new DPDException(ShippingErrorCode.NOT_AVAILABLE, "Feature not available for DPD");
         }
 
         /// <summary>
@@ -140,8 +141,11 @@ namespace ShippingProAPICollection.Provider.DPD
                 APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
             };
             // Send to RabbitMq
-
-            return;
+             await _rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+            {
+                Event = trackParcelResponse
+            }, cancelToken);
+            
         }
 
         private storeOrders CreateRequestModel(DPDShipmentRequestModel request)

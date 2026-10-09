@@ -1,9 +1,10 @@
+using System.Reflection;
 using Microsoft.OpenApi.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using ShippingProAPICollection.RabbitMq;
 using ShippingProAPICollection.RestApi.Entities;
 using ShippingProAPICollection.RestApi.Extensions;
-using System.Reflection;
 
 namespace ShippingProAPICollection.RestApi
 {
@@ -15,15 +16,16 @@ namespace ShippingProAPICollection.RestApi
 
             // Add services to the container.
             builder.Services.AddControllers(
-                options => {
+                options =>
+                {
                     options.Filters.Add<ModelValidationAttribute>();
                     options.Filters.Add<ExceptionHandlingAttribute>();
                 }
-            )
-            .AddNewtonsoftJson(options => 
-            { 
-                options.SerializerSettings.ReferenceLoopHandling = ReferenceLoopHandling.Ignore; 
-                options.SerializerSettings.Converters.Add(new StringEnumConverter()); 
+                                           )
+            .AddNewtonsoftJson(options =>
+            {
+                options.SerializerSettings.ReferenceLoopHandling = ReferenceLoopHandling.Ignore;
+                options.SerializerSettings.Converters.Add(new StringEnumConverter());
                 options.SerializerSettings.DateTimeZoneHandling = DateTimeZoneHandling.Utc;
                 options.AllowInputFormatterExceptionMessages = false;
                 options.SerializerSettings.Error += (sender, args) => throw args.ErrorContext.Error;
@@ -46,15 +48,32 @@ namespace ShippingProAPICollection.RestApi
                     }
                 }
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "ShippingProApiCollection", Version = "1.0.0" });
-              
+
                 c.OrderActionsBy((apiDesc) => $"{apiDesc.ActionDescriptor.RouteValues["controller"]}_{apiDesc.HttpMethod}");
                 c.UseOneOfForPolymorphism();
-      
             });
 
             builder.Services.AddSwaggerGenNewtonsoftSupport();
 
             builder.Services.AddMemoryCache();
+
+            if (builder.Configuration.GetValue<bool>("Tracking:Enabled"))
+            {
+                string? secretsFilePath = builder.Configuration.GetValue<string>("Tracking:SecretsFilePath");
+
+                if (string.IsNullOrWhiteSpace(secretsFilePath))
+                    throw new Exception("Secret FileLocation is missing");
+
+              
+                builder.Configuration.AddJsonFile(secretsFilePath, optional: true, reloadOnChange: true);
+
+                builder.Services.AddOptions<RabbitMqSecrets>()
+                    .Bind(builder.Configuration.GetSection(RabbitMqSecrets.SectionName))
+                    .ValidateDataAnnotations()
+                    .ValidateOnStart();
+            }
+           
+            builder.Services.AddSingleton<RabbitMqConnector>();
 
 
             ApplicationSettingService applicationSettingService = new ApplicationSettingService();
@@ -62,7 +81,6 @@ namespace ShippingProAPICollection.RestApi
             builder.Services.AddSingleton(applicationSettingService.BuildCollectionSettings());
 
             builder.Services.AddScoped<ShippingProAPICollectionService>();
-
 
             var app = builder.Build();
 

@@ -7,6 +7,7 @@ using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
+using ShippingProAPICollection.RabbitMq;
 
 namespace ShippingProAPICollection
 {
@@ -14,28 +15,28 @@ namespace ShippingProAPICollection
     {
         public Dictionary<string, IShippingProviderService> providerServices = new Dictionary<string, IShippingProviderService>();
 
-        public ShippingProAPICollectionService(IMemoryCache _cache, ShippingProAPICollectionSettings providerSettings)
+        public ShippingProAPICollectionService(IMemoryCache _cache, ShippingProAPICollectionSettings providerSettings, RabbitMqConnector rabbitMqConnector)
         {
             Dictionary<string, ProviderSettings> providers = providerSettings.GetProviders();
 
             foreach (KeyValuePair<string, ProviderSettings> provider in providers)
             {
-                providerServices.Add(provider.Key, BuildProviderService(providerSettings.DefaultShipFromAddress, provider.Value, _cache));
+                providerServices.Add(provider.Key, BuildProviderService(providerSettings.DefaultShipFromAddress, provider.Value, _cache, rabbitMqConnector));
             }
         }
 
-        private IShippingProviderService BuildProviderService(ShippingProAPIShipFromAddress defaultShipFromAddress, ProviderSettings settings, IMemoryCache _cache)
+        private IShippingProviderService BuildProviderService(ShippingProAPIShipFromAddress defaultShipFromAddress, ProviderSettings settings, IMemoryCache _cache, RabbitMqConnector rabbitMqConnector)
         {
             switch (settings)
             {
                 case GLSSettings providerSettings:
-                    return new GLSShipmentService(defaultShipFromAddress, providerSettings);
+                    return new GLSShipmentService(defaultShipFromAddress, providerSettings, rabbitMqConnector);
 
                 case DHLSettings providerSettings:
-                    return new DHLShipmentService(defaultShipFromAddress, providerSettings);
+                    return new DHLShipmentService(defaultShipFromAddress, providerSettings, rabbitMqConnector);
 
                 case DPDSettings providerSettings:
-                    return new DPDShipmentService(defaultShipFromAddress, providerSettings, _cache);
+                    return new DPDShipmentService(defaultShipFromAddress, providerSettings, _cache, rabbitMqConnector);
 
                 case TOFSettings providerSettings:
                     return new TOFShipmentService(defaultShipFromAddress, providerSettings, _cache);

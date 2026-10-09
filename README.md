@@ -6,7 +6,21 @@
 # Shipping Pro API Collection
 Welcome to our C# library, designed to integrate multiple shipping service APIs into one streamlined solution. This project provides a unified interface for GLS GLS, DHL, DPD and TOF simplifying the shipping process for developers and businesses. With easy integration, you can handle logistics across different carriers seamlessly. Ideal for enhancing efficiency in e-commerce and logistics operations.
 
- 
+## Contents
+
+- [Provider](#provider)
+- [Get Started](#get-started)
+	- [GLS Germany](#gls-germany) 
+	- [DHL Parcel Germany](#dhl-parcel-germany)
+	- [DPD Germany](#dpd-germany)
+	- [Trans-o-flex](#trans-o-flex)
+- [Add multiple contract accounts](#add-multiple-contract-accounts)
+- [Complete Example: Creating a Shipping Label with Custom Sender Address](#complete-example-creating-a-shipping-label-with-custom-sender-address)
+	- [Setup and Configuration](#setup-and-configuration)
+	- [Creating a Label with Custom Sender Address](#creating-a-label-with-custom-sender-address)
+- [RabbitMQ](#rabbitmq)
+	- [Setup](#setup)
+
 ## Provider
 
 - [X] GLS GLS Germany ([API Documentation](https://shipit.gls-group.eu/webservices/3_2_9/doxygen/WS-REST-API/index.html))
@@ -260,3 +274,101 @@ catch (Exception ex)
     Console.WriteLine($"Error creating label: {ex.Message}");
 }
 ```
+
+## RabbitMQ
+
+Parcel tracking uses Push notifications to inform you about the status of your shipments. To receive these notifications, you need to set up a RabbitMQ server and configure it to listen for messages from the shipping providers.
+
+## Setup
+### 1. Create a RabbitMQ Queue  
+
+### 2. Create a secrets.json file  
+IMPORTANT: replace the placeholder values (inkl. RabbitMqPort, 5672 is the default RabbitMQ port) with your actual RabbitMQ configuration:
+```json
+{
+  "RabbitMq": {
+    "TargetQueue": "YOUR_TARGET_QUEUE",
+    "JobQueue": "YOUR_JOB_QUEUE",
+    "RabbitMqUser": "YOUR_RABBITMQ_USER",
+    "RabbitMqPassword": "YOUR_RABBITMQ_PASSWORD",
+    "RabbitMqHostname": "YOUR_RABBITMQ_HOSTNAME",
+    "RabbitMqPort": 5672, 
+    "RabbitMqVirtualHost": "YOUR_RABBITMQ_VIRTUAL_HOST"
+  }
+}
+```
+
+### 3. Secure the secrets.json file
+Place the file into a secure location outside your source code directory and lock it down so that only your application can read it. 
+
+```powershell
+icacls "YOUR_PATH_TO_SECRETS" /inheritance:r
+icacls "YOUR_PATH_TO_SECRETS" /grant "Administrators:(OI)(CI)F"
+```
+
+and your application user:
+
+**IIS (ApplicationPoolIdentity)**
+
+```powershell
+icacls $secretsDir /grant "IIS AppPool\MyApiPool:(OI)(CI)R"
+```
+
+**IIS (custom identity)**
+
+```powershell
+icacls $secretsDir /grant "MYDOMAIN\svc-myapi:(OI)(CI)R"
+# or, for a local user:
+icacls $secretsDir /grant "$env:COMPUTERNAME\svc-myapi:(OI)(CI)R"
+```
+
+**Windows Service (virtual service account)**
+
+```powershell
+sc.exe config MyApi obj= "NT SERVICE\MyApi"
+icacls $secretsDir /grant "NT SERVICE\MyApi:(OI)(CI)R"
+```
+
+**Windows Service (gMSA)**
+
+```powershell
+icacls $secretsDir /grant "MYDOMAIN\gmsa-myapi$:(OI)(CI)R"
+```
+
+**Windows Service (Network / Local Service)**
+
+```powershell
+icacls $secretsDir /grant "NT AUTHORITY\NETWORK SERVICE:(OI)(CI)R"
+# or
+icacls $secretsDir /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)R"
+```
+
+**Kestrel started manually / Scheduled Task**
+
+```powershell
+icacls $secretsDir /grant "MYDOMAIN\deploy-user:(OI)(CI)R"
+```
+
+
+### 4. Update appSettings.json 
+
+Update your appSettings.json to include the path to the secrets.json file:
+
+```json
+{
+"Tracking": {
+  "SecretsFilePath": "path/to/secrets.json"
+  }
+}
+```
+
+and set	Tracking:Enabled to true in your appSettings.json otherwise secrets will not be read:
+
+```json
+{
+ "Tracking": {
+    "Enabled": true,  
+  }
+}
+```
+

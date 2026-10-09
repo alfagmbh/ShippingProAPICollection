@@ -9,6 +9,7 @@ using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DHL.Entities.VASService;
 using ShippingProAPICollection.Provider.GLS;
+using ShippingProAPICollection.RabbitMq;
 using System.Globalization;
 
 namespace ShippingProAPICollection.Provider.DHL
@@ -17,11 +18,13 @@ namespace ShippingProAPICollection.Provider.DHL
     {
         private DHLSettings providerSettings = null!;
         private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
+        private RabbitMqConnector rabbitMqConnector = null!;
 
-        public DHLShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DHLSettings providerSettings)
+        public DHLShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DHLSettings providerSettings, RabbitMqConnector rabbitMqConnector)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
             this.providerSettings = providerSettings;
+            this.rabbitMqConnector = rabbitMqConnector;
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -444,7 +447,10 @@ namespace ShippingProAPICollection.Provider.DHL
             };
             // Send to rabbitmq
 
-
+            await rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+            {
+                Event = trackParcelResponse
+            }, cancelToken);
         }
     }
 }

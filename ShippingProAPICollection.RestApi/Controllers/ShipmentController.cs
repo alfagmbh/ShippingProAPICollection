@@ -5,7 +5,9 @@ using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using ShippingProAPICollection.Models;
+using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Provider;
+using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
 using ShippingProAPICollection.RestApi.Entities;
@@ -197,46 +199,5 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         #endregion endpoints
 
-        #region push notification
-
-        [HttpGet]
-        [Route("push/notification/gls")]
-        [EnableCors("Intern")]
-        [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
-        [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
-        [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
-        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] GLSParcelStatusChangeNotification notificationData)
-        {
-            try
-            {
-                await shippingProAPICollectionService.ProcessPushNotification(notificationData);
-                return Ok();
-            }
-            catch (Exception)
-            {
-                return StatusCode((int)HttpStatusCode.InternalServerError, new InternalServerErrorReponse("An error occurred while processing the request."));
-            }
-        }
-
-        [HttpGet]
-        [Route("push/notification/dpd")]
-        [EnableCors("Intern")]
-        [ProducesResponseType(typeof(InternalServerErrorReponse), (int)HttpStatusCode.InternalServerError)]
-        [ProducesResponseType(typeof(BadRequestReponse), (int)HttpStatusCode.BadRequest)]
-        [ProducesResponseType(typeof(UnprocessableEntityResponse), (int)HttpStatusCode.UnprocessableEntity)]
-        public async Task<IActionResult> GetPushNotification([FromQuery, BindRequired] DPDParcelStatusChangeNotification notificationData)
-        {
-            try
-            {
-                await shippingProAPICollectionService.ProcessPushNotification(notificationData);
-                return Ok();
-            }
-            catch (Exception)
-            {
-                return StatusCode((int)HttpStatusCode.InternalServerError, new InternalServerErrorReponse("An error occurred while processing the request."));
-            }
-        }
-    }
-
-        #endregion push notification
+    } 
 }
