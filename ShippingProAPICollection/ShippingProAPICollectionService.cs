@@ -4,8 +4,10 @@ using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Provider;
 using ShippingProAPICollection.Provider.DHL;
+using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
+using ShippingProAPICollection.Provider.GLS.Entities;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
 using ShippingProAPICollection.RabbitMq;
 
@@ -100,27 +102,64 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException("Unknown shipping provider");
         }
 
-        public async Task ProcessPushNotification(IParcelStatusChangeNotification notificationData, CancellationToken ct = default)
+        public async Task ProcessPushNotification(ParcelStatusChangeNotification notificationData, CancellationToken ct = default)
         {
             switch (notificationData.ShippingProviderType)
             {
                 case ShippingProviderType.DHL:
                     var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().FirstOrDefault();
-                    await serviceDHL.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    await serviceDHL.ProcessParcelStatusChangeNotification(
+                        notificationData is DHLParcelStatusChangeNotification dhlNotification
+                        ? dhlNotification
+                        : throw new InvalidOperationException("Invalid notification type"), ct);
                     break;
 
                 case ShippingProviderType.DPD:
                     var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().FirstOrDefault();
-                    await serviceDPD.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    await serviceDPD.ProcessParcelStatusChangeNotification(
+                        notificationData is DPDParcelStatusChangeNotification dpdNotification
+                        ? dpdNotification
+                        : throw new InvalidOperationException("Invalid notification type"), ct);
                     break;
 
                 case ShippingProviderType.GLS:
                     var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().FirstOrDefault();
-                    await serviceGLS.ProcessParcelStatusChangeNotification(notificationData, ct);
+                    await serviceGLS.ProcessParcelStatusChangeNotification(
+                        notificationData is GLSParcelStatusChangeNotification glsNotification
+                        ? glsNotification
+                        : throw new InvalidOperationException("Invalid notification type"), ct);
                     break;
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
+            }
+        }
+
+        public async Task SubscribeToPushNotification(SubscriberRequest request, CancellationToken ct = default)
+        {
+            switch (request.ShippingProviderType)
+            {
+                case ShippingProviderType.DHL:
+                    var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().FirstOrDefault();
+                    await serviceDHL.SubscribeToWebhook(request is DHLWebhookSubscriberRequest dhlRequest ? dhlRequest : throw new InvalidOperationException("Invalid request type"), ct);
+                    break;
+
+                case ShippingProviderType.GLS:
+                    var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().FirstOrDefault();
+                    await serviceGLS.SubscribeToWebhook(request is GLSWebhookSubscriberRequest glsRequest ? glsRequest : throw new InvalidOperationException("Invalid request type"), ct);
+                    break;
+
+                default:
+                    throw new InvalidOperationException("Unknown shipping provider");
+            }
+        }
+
+        public async Task ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
+        {
+            var serviceDHL = GetServiceProviderFromType<DHLShipmentService>();
+            foreach (var dhlService in serviceDHL)
+            {
+                await dhlService.ActivateSubscriber(request, ct);
             }
         }
 

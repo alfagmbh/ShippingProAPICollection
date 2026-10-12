@@ -5,11 +5,11 @@ using System.Text.Json.Serialization;
 
 namespace ShippingProAPICollection.Provider.DPD
 {
-    public class DPDParcelStatusChangeNotification : IParcelStatusChangeNotification
+    public class DPDParcelStatusChangeNotification : ParcelStatusChangeNotification
     {
 
         [JsonIgnore]
-        public ShippingProviderType ShippingProviderType => ShippingProviderType.DPD;
+        public override ShippingProviderType ShippingProviderType => ShippingProviderType.DPD;
 
         [FromQuery(Name = "pushid")]
         [Required]

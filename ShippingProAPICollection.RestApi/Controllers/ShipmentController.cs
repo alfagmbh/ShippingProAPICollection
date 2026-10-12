@@ -25,7 +25,7 @@ namespace ShippingProAPICollection.RestApi.Controllers
         ApplicationSettingService applicationSettingService
                                    ) : ControllerBase
     {
-        #region endpoints
+        
 
         /// <summary>
         /// Anfragen eines neuen Labels
@@ -197,7 +197,8 @@ namespace ShippingProAPICollection.RestApi.Controllers
             return new NoContentResult();
         }
 
-        #endregion endpoints
+        
+
 
     } 
 }

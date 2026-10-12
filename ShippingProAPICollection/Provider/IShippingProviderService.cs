@@ -56,7 +56,7 @@ namespace ShippingProAPICollection.Provider
         /// <param name="webhookUrl">The URL of the webhook to subscribe to</param>
         /// <param name="cancelToken">A token to cancel the operation</param>
         /// <returns></returns>
-        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken);
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken cancelToken);
 
         /// <summary>
         /// Process incoming webhook data
@@ -64,6 +64,6 @@ namespace ShippingProAPICollection.Provider
         /// <param name="webhookData"></param>
         /// <param name="cancelToken"></param>
         /// <returns></returns>
-        public Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
+        public Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
     }
 }

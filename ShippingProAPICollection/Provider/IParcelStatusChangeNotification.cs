@@ -9,8 +9,8 @@ using ShippingProAPICollection.Provider.TRANSOFLEX;
 
 namespace ShippingProAPICollection.Provider
 {
-    public interface IParcelStatusChangeNotification
+    public abstract class ParcelStatusChangeNotification
     {
-        ShippingProviderType ShippingProviderType { get; }
+        public abstract ShippingProviderType ShippingProviderType { get; }
     }
 }

@@ -6,10 +6,10 @@ using System.Text;
 
 namespace ShippingProAPICollection.Provider.DHL
 {
-    public class DHLParcelStatusChangeNotification : IParcelStatusChangeNotification
+    public class DHLParcelStatusChangeNotification : ParcelStatusChangeNotification
     {
         [JsonIgnore]
-        public ShippingProviderType ShippingProviderType => ShippingProviderType.DHL;
+        public override ShippingProviderType ShippingProviderType => ShippingProviderType.DHL;
 
         [JsonProperty("self")]
         public string? Self { get; set; }

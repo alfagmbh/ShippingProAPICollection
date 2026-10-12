@@ -202,23 +202,18 @@ namespace ShippingProAPICollection.Provider.GLS
         private readonly MemoryCache _memoryCache = new(new MemoryCacheOptions());
         private const string WebhookSubscriptionUrl = "https://api.gls-group.net/push-notification-v1/management/subscription/shippers";
 
-        public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
+        public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken ct)
         {
-            var requestBody = new
-            {
-                id = Guid.NewGuid().ToString(),
-                customerId = "2761234567",
-                contactId = "276abcdefg",
-                portalUsername = "JohnDoe",
-                portalPassword = "password123",
-                webhookUrl = "url" //todo replace with real webhook url
-            };
+            var glsSubscriberRequest = subscriberRequest as GLSWebhookSubscriberRequest 
+                ?? throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, "SubscriberRequest konnte nicht in den GLSWebhookSubscriberRequest konvertiert werden");
+
+            var requestBody = JsonConvert.SerializeObject(glsSubscriberRequest);
 
             var response = await CallApi<object>(
                 new Uri(WebhookSubscriptionUrl),
                 Method.Post,
                 requestBody,
-                cancelToken);
+                ct);
 
             return new WebHookSubsribeAttemptResponse()
             {
@@ -228,10 +223,9 @@ namespace ShippingProAPICollection.Provider.GLS
             };
         }
 
-        public async Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public async Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not GLSParcelStatusChangeNotification glsParcelStatusChangeNotification ||
-                glsParcelStatusChangeNotification is null ||
                 glsParcelStatusChangeNotification.ParcelId is null ||
                 glsParcelStatusChangeNotification.ParcelStatus is null)
                 throw new ArgumentException("Invalid data");
@@ -239,10 +233,10 @@ namespace ShippingProAPICollection.Provider.GLS
             //transform the webhook data into a model
             ParcelTrackingEvent? trackParcelResponse = new()
             {
-                ParcelNumber = glsParcelStatusChangeNotification?.ParcelId,
-                Status = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification?.ParcelStatus ?? string.Empty).ToString(),
-                APIValue = glsParcelStatusChangeNotification?.EventCode,
-                CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification?.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
+                ParcelNumber = glsParcelStatusChangeNotification.ParcelId,
+                Status = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification.ParcelStatus).ToString(),
+                APIValue = glsParcelStatusChangeNotification.EventCode,
+                CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
             };
             //send to rabbit mq
             await _rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()

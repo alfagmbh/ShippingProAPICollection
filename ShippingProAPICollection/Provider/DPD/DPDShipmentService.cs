@@ -125,10 +125,9 @@ namespace ShippingProAPICollection.Provider.DPD
             return providerSettings.MaxPackageWeight;
         }
 
-        public async Task ProcessParcelStatusChangeNotification(IParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public async Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not DPDParcelStatusChangeNotification dpdParcelStatusChangeNotification ||
-               dpdParcelStatusChangeNotification is null ||
                dpdParcelStatusChangeNotification.ParcelNumber is null ||
                dpdParcelStatusChangeNotification.Status is null)
                 throw new ArgumentException("Invalid data");
@@ -373,13 +372,11 @@ namespace ShippingProAPICollection.Provider.DPD
             }
         }
 
-        internal async Task ProcessParcelStatusChangeNotification(DPDParcelStatusChangeNotification parcelStatusChangeNotification, CancellationToken ct)
-        {
-        }
+     
 
-        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(CancellationToken cancelToken)
+        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken cancelToken)
         {
-            throw new NotImplementedException();
+            throw new DPDException(ShippingErrorCode.NOT_AVAILABLE, "Feature not available for DPD");
         }
 
     }
