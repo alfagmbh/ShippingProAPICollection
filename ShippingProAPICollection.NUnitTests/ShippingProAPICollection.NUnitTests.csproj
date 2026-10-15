@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ShippingProAPICollection\ShippingProAPICollection.csproj" />
+    <ProjectReference Include="..\ShippingProAPICollection.RestApi\ShippingProAPICollection.RestApi.csproj" />
   </ItemGroup>
 
 </Project>
