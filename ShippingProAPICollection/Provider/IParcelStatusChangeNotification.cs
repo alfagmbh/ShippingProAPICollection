@@ -1,5 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using JsonSubTypes;
+﻿using JsonSubTypes;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Newtonsoft.Json;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Provider.DHL;
@@ -11,6 +12,8 @@ namespace ShippingProAPICollection.Provider
 {
     public abstract class ParcelStatusChangeNotification
     {
+        [BindNever]
+        [JsonIgnore]
         public abstract ShippingProviderType ShippingProviderType { get; }
     }
 }

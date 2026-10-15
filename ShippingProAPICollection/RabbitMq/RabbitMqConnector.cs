@@ -13,15 +13,15 @@ using System.Text;
 
 namespace ShippingProAPICollection.RabbitMq
 {
-    public class RabbitMqConnector(IOptions<RabbitMqSecrets> options, CancellationToken cancellationToken) : IDisposable
+    public class RabbitMqConnector(IOptions<RabbitMqSecrets> options)
     {
-        private readonly LinkedTokenWithTimeout _timeoutToken = new LinkedTokenWithTimeout(TimeSpan.FromMinutes(1), cancellationToken);
         private readonly RabbitMqSecrets _secrets = options.Value;
 
         #region Public Methods
 
         public async Task AddTaskToQueueAsync(TrackingEvent eventData, CancellationToken cancellationToken)
         {
+            using var timeoutToken = new LinkedTokenWithTimeout(TimeSpan.FromMinutes(1), cancellationToken);
             LocalRabbitMqEvent ev = new LocalRabbitMqEvent()
             {
                 Body = JsonConvert.SerializeObject(eventData, new JsonSerializerSettings
@@ -32,7 +32,11 @@ namespace ShippingProAPICollection.RabbitMq
 
             try
             {
-                await PublishLocalEventsAsync(ev, cancellationToken);
+                await PublishLocalEventsAsync(ev, timeoutToken.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -40,20 +44,14 @@ namespace ShippingProAPICollection.RabbitMq
             }
         }
 
-        public void Dispose()
-        {
-            _timeoutToken?.Dispose();
-        }
-
         #endregion Public Methods
 
         #region Private Methods
 
-        private async Task PublishLocalEventsAsync(LocalRabbitMqEvent localEvent, CancellationToken cancellationToken)
+        private async Task PublishLocalEventsAsync(LocalRabbitMqEvent localEvent, CancellationToken ct)
         {
             const int maxAttempts = 3;
 
-            var ct = _timeoutToken.Token;
 
             // Idealerweise eine langlebige, injizierte Connection statt BuildConnectionAsync pro Aufruf
             await using IConnection connection = await BuildConnectionAsync(ct);
@@ -149,7 +147,11 @@ namespace ShippingProAPICollection.RabbitMq
 
             var connection = await new ConnectionFactory()
             {
-                Uri = new Uri($"amqps://{_secrets.RabbitMqUser}:{_secrets.RabbitMqPassword}@{_secrets.RabbitMqHostname}:{_secrets.RabbitMqPort}/{_secrets.RabbitMqVirtualHost}"),
+                UserName = _secrets.RabbitMqUser,
+                Password = _secrets.RabbitMqPassword,
+                HostName = _secrets.RabbitMqHostname,
+                Port = (int)_secrets.RabbitMqPort,
+                VirtualHost = _secrets.RabbitMqVirtualHost,
                 Ssl = new SslOption
                 {
                     Enabled = true,
@@ -243,7 +245,6 @@ namespace ShippingProAPICollection.RabbitMq
     {
         #region Fields
 
-        //private const string privatePassword = "*8UG^x*F~J:ragYaYJJzr.E";
         private byte[] privateKey;
 
         #endregion Fields
@@ -252,7 +253,7 @@ namespace ShippingProAPICollection.RabbitMq
 
         public RabbitSecurity(string privatePassword)
         {
-            SHA256 mySHA256 = SHA256.Create();
+            using SHA256 mySHA256 = SHA256.Create();
             privateKey = mySHA256.ComputeHash(Encoding.ASCII.GetBytes(privatePassword));
         }
 
@@ -262,49 +263,24 @@ namespace ShippingProAPICollection.RabbitMq
 
         public string EncryptString(string plainText, byte[] publicKey)
         {
-            // Instantiate a new Aes object to perform string symmetric encryption
-            Aes encryptor = Aes.Create();
+            using Aes encryptor = Aes.Create();
 
             encryptor.Mode = CipherMode.CBC;
-            //encryptor.KeySize = 256;
-            //encryptor.BlockSize = 128;
-            //encryptor.Padding = PaddingMode.Zeros;
 
-            // Set key and IV
             encryptor.Key = privateKey;
             encryptor.IV = publicKey;
 
-            // Instantiate a new MemoryStream object to contain the encrypted bytes
-            MemoryStream memoryStream = new MemoryStream();
+            using MemoryStream memoryStream = new MemoryStream();
 
-            // Instantiate a new encryptor from our Aes object
-            ICryptoTransform aesEncryptor = encryptor.CreateEncryptor();
+            using (ICryptoTransform aesEncryptor = encryptor.CreateEncryptor())
+            using (CryptoStream cryptoStream = new CryptoStream(memoryStream, aesEncryptor, CryptoStreamMode.Write, leaveOpen: true))
+            {
+                byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+                cryptoStream.Write(plainBytes, 0, plainBytes.Length);
+                cryptoStream.FlushFinalBlock();
+            }
 
-            // Instantiate a new CryptoStream object to process the data and write it to the
-            // memory stream
-            CryptoStream cryptoStream = new CryptoStream(memoryStream, aesEncryptor, CryptoStreamMode.Write);
-
-            // Convert the plainText string into a byte array
-            byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-
-            // Encrypt the input plaintext string
-            cryptoStream.Write(plainBytes, 0, plainBytes.Length);
-
-            // Complete the encryption process
-            cryptoStream.FlushFinalBlock();
-
-            // Convert the encrypted data from a MemoryStream to a byte array
-            byte[] cipherBytes = memoryStream.ToArray();
-
-            // Close both the MemoryStream and the CryptoStream
-            memoryStream.Close();
-            cryptoStream.Close();
-
-            // Convert the encrypted byte array to a base64 encoded string
-            string cipherText = Convert.ToBase64String(cipherBytes, 0, cipherBytes.Length);
-
-            // Return the encrypted data as a string
-            return cipherText;
+            return Convert.ToBase64String(memoryStream.ToArray());
         }
 
         public string DecryptString(string cipherText, byte[] publicKey)
@@ -365,9 +341,8 @@ namespace ShippingProAPICollection.RabbitMq
         public byte[] GetRandomIV()
         {
             byte[] randomBytes = new byte[16];
-            Random random = new Random();
-
-            random.NextBytes(randomBytes);
+            using RandomNumberGenerator rng = RandomNumberGenerator.Create();
+            rng.GetBytes(randomBytes);
             return randomBytes;
         }
 

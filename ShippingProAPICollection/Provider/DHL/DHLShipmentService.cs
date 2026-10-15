@@ -424,11 +424,11 @@ namespace ShippingProAPICollection.Provider.DHL
             if (subscriberRequest is not DHLWebhookSubscriberRequest dhlSubscriberRequest)
                 throw new ArgumentException("Invalid subscriber request type", nameof(subscriberRequest));
 
-            var options = new RestClientOptions("https://api-sandbox.dhl.com/tracking/push/v1")
+            var options = new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", providerSettings.ApiDomain))
             {
                 Timeout = TimeSpan.FromSeconds(30),
             };
-            var client = new RestClient(options);
+            using var client = new RestClient(options);
             var request = new RestRequest("/subscription", Method.Post);
             request.AddHeader("content-type", "application/json");
             request.AddHeader("DHL-API-Key", dhlSubscriberRequest.DhlApiKey);
@@ -477,12 +477,12 @@ namespace ShippingProAPICollection.Provider.DHL
         }
         public async Task<WebHookSubsribeAttemptResponse> ActivateSubscriber(DHLSubscriberActivatorRequest activator, CancellationToken ct = default)
         {
-            var activatorOptions = new RestClientOptions("https://api-sandbox.dhl.com/tracking/push/v1")
+            var activatorOptions = new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", providerSettings.ApiDomain))
             {
                 Timeout = TimeSpan.FromSeconds(30),
             };
 
-            var activatorClient = new RestClient(activatorOptions);
+            using var activatorClient = new RestClient(activatorOptions);
             var activatorRequest = new RestRequest("/subscription/{subscriberId}", Method.Post);
             activatorRequest.AddUrlSegment("subscriberId", activator.SubscriberId);
             activatorRequest.AddHeader("DHL-API-Hook-Secret", activator.DhlApiHookSecret);
@@ -508,22 +508,27 @@ namespace ShippingProAPICollection.Provider.DHL
         {
             if (parcelStatusChangeNotification is not DHLParcelStatusChangeNotification dhlParcelStatusChangeNotification ||
                 dhlParcelStatusChangeNotification.Shipments is null ||
-                dhlParcelStatusChangeNotification.Shipments.Count == 0)
+                dhlParcelStatusChangeNotification.Shipments.Count == 0 ||
+                dhlParcelStatusChangeNotification.Shipments.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || s.Status is null))
                 throw new ArgumentException("Invalid data");
 
-            // Process the parcel status change notification
-            ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent()
-            {
-                Status = DHLTrackingStatusTypes.GetTrackingStatusType(dhlParcelStatusChangeNotification.Shipments[0].Status.StatusCode ?? "").ToString(),
-                APIValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification),
-                ParcelNumber = dhlParcelStatusChangeNotification.Shipments[0].Id,
-            };
-            // Send to rabbitmq
+            string apiValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification);
 
-            await rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+            // A single push can contain several shipments; publish one tracking event per shipment.
+            foreach (var shipment in dhlParcelStatusChangeNotification.Shipments)
             {
-                Event = trackParcelResponse
-            }, cancelToken);
+                ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent()
+                {
+                    Status = DHLTrackingStatusTypes.GetTrackingStatusType(shipment.Status.StatusCode ?? "").ToString(),
+                    APIValue = apiValue,
+                    ParcelNumber = shipment.Id,
+                };
+
+                await rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+                {
+                    Event = trackParcelResponse
+                }, cancelToken);
+            }
         }
 
         

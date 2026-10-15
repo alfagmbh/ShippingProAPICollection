@@ -73,7 +73,6 @@ namespace ShippingProAPICollection.RestApi
                     .ValidateOnStart();
             }
            
-            builder.Services.AddSingleton<RabbitMqConnector>();
 
 
             ApplicationSettingService applicationSettingService = new ApplicationSettingService();
@@ -81,6 +80,7 @@ namespace ShippingProAPICollection.RestApi
             builder.Services.AddSingleton(applicationSettingService.BuildCollectionSettings());
 
             builder.Services.AddScoped<ShippingProAPICollectionService>();
+            builder.Services.AddScoped<RabbitMqConnector>();
 
             var app = builder.Build();
 

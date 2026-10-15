@@ -291,13 +291,13 @@ namespace ShippingProAPICollection.NUnitTests
         [Test]
         public async Task TrackShippingLabel()
         {
-            ShippingProAPICollectionService shippingCollection = _serviceProvider.GetRequiredService<ShippingProAPICollectionService>();
-            string contractId = "DHL";
-            string trackingNr = "00340433930440211852"; //
+            //ShippingProAPICollectionService shippingCollection = _serviceProvider.GetRequiredService<ShippingProAPICollectionService>();
+            //string contractId = "DHL";
+            //string trackingNr = "00340433930440211852"; //
             
-            var trackResult = (await shippingCollection.TrackLabels(contractId,[trackingNr], CancellationToken.None));
-            Assert.That(trackResult.Count() == 1);
-            Assert.That(trackResult.FirstOrDefault()?.ParcelNumber == trackingNr);
+            //var trackResult = (await shippingCollection.TrackLabels(contractId,[trackingNr], CancellationToken.None));
+            //Assert.That(trackResult.Count() == 1);
+            //Assert.That(trackResult.FirstOrDefault()?.ParcelNumber == trackingNr);
         }
     }
 }

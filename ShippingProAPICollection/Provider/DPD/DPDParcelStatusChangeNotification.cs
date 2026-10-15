@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using ShippingProAPICollection.Models.Entities;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
@@ -8,7 +9,6 @@ namespace ShippingProAPICollection.Provider.DPD
     public class DPDParcelStatusChangeNotification : ParcelStatusChangeNotification
     {
 
-        [JsonIgnore]
         public override ShippingProviderType ShippingProviderType => ShippingProviderType.DPD;
 
         [FromQuery(Name = "pushid")]

@@ -135,32 +135,31 @@ namespace ShippingProAPICollection
             }
         }
 
-        public async Task SubscribeToPushNotification(SubscriberRequest request, CancellationToken ct = default)
+        public async Task<WebHookSubsribeAttemptResponse> SubscribeToPushNotification(SubscriberRequest request, CancellationToken ct = default)
         {
+            if (!Uri.TryCreate(request.HookUri, UriKind.Absolute, out var hookUri) || hookUri.Scheme != Uri.UriSchemeHttps)
+                throw new ArgumentException("HookUri must be an absolute https URL.", nameof(request));
+
             switch (request.ShippingProviderType)
             {
                 case ShippingProviderType.DHL:
-                    var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().FirstOrDefault();
-                    await serviceDHL.SubscribeToWebhook(request is DHLWebhookSubscriberRequest dhlRequest ? dhlRequest : throw new InvalidOperationException("Invalid request type"), ct);
-                    break;
+                    var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
+                    return await serviceDHL.SubscribeToWebhook(request is DHLWebhookSubscriberRequest dhlRequest ? dhlRequest : throw new InvalidOperationException("Invalid request type"), ct);
 
                 case ShippingProviderType.GLS:
-                    var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().FirstOrDefault();
-                    await serviceGLS.SubscribeToWebhook(request is GLSWebhookSubscriberRequest glsRequest ? glsRequest : throw new InvalidOperationException("Invalid request type"), ct);
-                    break;
+                    var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
+                    return await serviceGLS.SubscribeToWebhook(request is GLSWebhookSubscriberRequest glsRequest ? glsRequest : throw new InvalidOperationException("Invalid request type"), ct);
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
             }
         }
 
-        public async Task ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
+        public async Task<WebHookSubsribeAttemptResponse> ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
         {
-            var serviceDHL = GetServiceProviderFromType<DHLShipmentService>();
-            foreach (var dhlService in serviceDHL)
-            {
-                await dhlService.ActivateSubscriber(request, ct);
-            }
+            // Activation only uses values from the request, so a single call is enough regardless of how many DHL contracts exist.
+            var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
+            return await serviceDHL.ActivateSubscriber(request, ct);
         }
 
         public async Task Confirm(string contractID, string confirmId, CancellationToken ct = default)

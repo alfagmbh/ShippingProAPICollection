@@ -199,20 +199,17 @@ namespace ShippingProAPICollection.Provider.GLS
         #region parcel tracking
 
         private static readonly HttpClient _httpClient = new();
-        private readonly MemoryCache _memoryCache = new(new MemoryCacheOptions());
         private const string WebhookSubscriptionUrl = "https://api.gls-group.net/push-notification-v1/management/subscription/shippers";
 
         public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken ct)
         {
-            var glsSubscriberRequest = subscriberRequest as GLSWebhookSubscriberRequest 
-                ?? throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, "SubscriberRequest konnte nicht in den GLSWebhookSubscriberRequest konvertiert werden");
-
-            var requestBody = JsonConvert.SerializeObject(glsSubscriberRequest);
+            if (subscriberRequest is not GLSWebhookSubscriberRequest glsSubscriberRequest)
+                throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, "SubscriberRequest konnte nicht in den GLSWebhookSubscriberRequest konvertiert werden");
 
             var response = await CallApi<object>(
                 new Uri(WebhookSubscriptionUrl),
                 Method.Post,
-                requestBody,
+                glsSubscriberRequest,
                 ct);
 
             return new WebHookSubsribeAttemptResponse()
@@ -323,7 +320,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 Authenticator = new HttpBasicAuthenticator(providerSettings.Username, providerSettings.Password)
             };
 
-            RestClient client = new RestClient(clientOptions);
+            using RestClient client = new RestClient(clientOptions);
 
             var clientRequest = new RestRequest()
             {
