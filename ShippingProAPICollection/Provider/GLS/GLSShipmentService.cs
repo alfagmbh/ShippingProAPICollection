@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using Newtonsoft.Json.Serialization;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -199,18 +202,115 @@ namespace ShippingProAPICollection.Provider.GLS
         #region parcel tracking
 
         private static readonly HttpClient _httpClient = new();
-        private const string WebhookSubscriptionUrl = "https://api.gls-group.net/push-notification-v1/management/subscription/shippers";
+        private const string PushNotificationBaseUrl = "https://api.gls-group.net/push-notification-v1";
+        private const string WebhookSubscriptionUrl = PushNotificationBaseUrl + "/management/subscription/shippers";
+        private const string WebhookUserUrl = PushNotificationBaseUrl + "/management/user";
+        private const string WebhookAuthUrl = PushNotificationBaseUrl + "/management/auth";
+        private const string OAuthTokenUrl = "https://api.gls-group.net/oauth2/v2/token";
+
+        // The services are created per request, so the OAuth token is cached per application id across instances.
+        private static readonly ConcurrentDictionary<string, (string Token, DateTime ExpiresAt)> _pushTokenCache = new();
 
         public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken ct)
         {
             if (subscriberRequest is not GLSWebhookSubscriberRequest glsSubscriberRequest)
                 throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, "SubscriberRequest konnte nicht in den GLSWebhookSubscriberRequest konvertiert werden");
 
-            var response = await CallApi<object>(
-                new Uri(WebhookSubscriptionUrl),
-                Method.Post,
-                glsSubscriberRequest,
-                ct);
+            return await CallPushApi(WebhookSubscriptionUrl, glsSubscriberRequest, ct);
+        }
+
+        /// <summary>
+        /// Step 1: registers the webhook user. The GLS response contains the webhook user id needed by all later calls.
+        /// </summary>
+        public async Task<WebHookSubsribeAttemptResponse> CreateWebhookUser(GLSWebhookUserRequest request, CancellationToken ct) =>
+            await CallPushApi(WebhookUserUrl, request, ct);
+
+        /// <summary>
+        /// Step 2: registers the BASIC credentials GLS must use when calling the webhook URL.
+        /// </summary>
+        public async Task<WebHookSubsribeAttemptResponse> ConfigureWebhookAuth(GLSWebhookAuthRequest request, CancellationToken ct)
+        {
+            if (string.IsNullOrEmpty(providerSettings.PushNotificationUsername) || string.IsNullOrEmpty(providerSettings.PushNotificationPassword))
+                throw new InvalidOperationException("PushNotificationUsername and PushNotificationPassword must be configured for GLS.");
+
+            return await CallPushApi(WebhookAuthUrl, new
+            {
+                id = request.WebhookUserId,
+                webhookUrl = request.WebhookUrl,
+                authType = "BASIC",
+                authData = new
+                {
+                    user = providerSettings.PushNotificationUsername,
+                    password = providerSettings.PushNotificationPassword
+                }
+            }, ct);
+        }
+
+        /// <summary>
+        /// Checks the Basic Authorization header of an incoming push notification against the configured credentials.
+        /// Fails closed when no credentials are configured.
+        /// </summary>
+        public bool IsValidPushCredentials(string? authorizationHeader)
+        {
+            if (string.IsNullOrEmpty(providerSettings.PushNotificationUsername) || string.IsNullOrEmpty(providerSettings.PushNotificationPassword))
+                return false;
+
+            const string scheme = "Basic ";
+            if (authorizationHeader is null || !authorizationHeader.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            byte[] provided;
+            try
+            {
+                provided = Convert.FromBase64String(authorizationHeader.Substring(scheme.Length).Trim());
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+
+            var expected = Encoding.UTF8.GetBytes($"{providerSettings.PushNotificationUsername}:{providerSettings.PushNotificationPassword}");
+            return CryptographicOperations.FixedTimeEquals(provided, expected);
+        }
+
+        private async Task<string> GetPushAccessToken(CancellationToken ct)
+        {
+            if (_pushTokenCache.TryGetValue(providerSettings.ApplicationID, out var cached) && cached.ExpiresAt > DateTime.UtcNow)
+                return cached.Token;
+
+            using var client = new RestClient(new RestClientOptions(OAuthTokenUrl)
+            {
+                Authenticator = new HttpBasicAuthenticator(providerSettings.ApplicationID, providerSettings.ApplicationSecret)
+            });
+
+            var request = new RestRequest { Method = Method.Post };
+            request.AddParameter("grant_type", "client_credentials");
+
+            var response = await client.ExecuteAsync(request, ct).ConfigureAwait(false);
+            var token = response.IsSuccessful && response.Content != null
+                ? JsonConvert.DeserializeObject<GLSAuthToken>(response.Content)
+                : null;
+
+            if (token == null)
+                throw new GLSException(ShippingErrorCode.UNKNOW, "GLS OAuth token request failed", null);
+
+            _pushTokenCache[providerSettings.ApplicationID] = (token.AccessToken, DateTime.UtcNow.AddSeconds(Math.Max(token.ExpiresIn - 60, 0)));
+            return token.AccessToken;
+        }
+
+        private async Task<WebHookSubsribeAttemptResponse> CallPushApi(string url, object body, CancellationToken ct)
+        {
+            var accessToken = await GetPushAccessToken(ct);
+
+            using var client = new RestClient(new RestClientOptions(url)
+            {
+                Authenticator = new JwtAuthenticator(accessToken)
+            });
+
+            var request = new RestRequest { Method = Method.Post };
+            request.AddStringBody(JsonConvert.SerializeObject(body, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }), "application/json");
+
+            var response = await client.ExecuteAsync(request, ct).ConfigureAwait(false);
 
             return new WebHookSubsribeAttemptResponse()
             {

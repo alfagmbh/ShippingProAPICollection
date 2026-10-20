@@ -32,8 +32,18 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         [HttpPost]
         [Route("gls")]
-        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] GLSParcelStatusChangeNotification notificationData, CancellationToken ct) =>
-            await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(notificationData, t), ct);
+        [ProducesResponseType(typeof(void), (int)HttpStatusCode.Unauthorized)]
+        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] GLSParcelStatusChangeNotification notificationData, CancellationToken ct)
+        {
+            // GLS sends the BASIC credentials registered via gls/webhook-auth.
+            if (!shippingProAPICollectionService.IsValidGLSPushCredentials(Request.Headers.Authorization))
+            {
+                Response.Headers.WWWAuthenticate = "Basic";
+                return Unauthorized();
+            }
+
+            return await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(notificationData, t), ct);
+        }
 
         [HttpPost]
         [Route("dhl")]
@@ -85,6 +95,24 @@ namespace ShippingProAPICollection.RestApi.Controllers
         [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
         public async Task<IActionResult> Subscribe([FromBody, BindRequired] GLSWebhookSubscriberRequest notificationData, CancellationToken ct) =>
             await HandleSubscription(t => shippingProAPICollectionService.SubscribeToPushNotification(notificationData, t), ct);
+
+        /// <summary>
+        /// GLS setup step 1: registers the webhook user. The returned message contains the webhook user id.
+        /// </summary>
+        [HttpPost]
+        [Route("gls/webhook-user")]
+        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
+        public async Task<IActionResult> CreateGLSWebhookUser([FromBody, BindRequired] GLSWebhookUserRequest request, CancellationToken ct) =>
+            await HandleSubscription(t => shippingProAPICollectionService.CreateGLSWebhookUser(request, t), ct);
+
+        /// <summary>
+        /// GLS setup step 2: registers the BASIC credentials (from the GLS settings) GLS uses to call the webhook URL.
+        /// </summary>
+        [HttpPost]
+        [Route("gls/webhook-auth")]
+        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
+        public async Task<IActionResult> ConfigureGLSWebhookAuth([FromBody, BindRequired] GLSWebhookAuthRequest request, CancellationToken ct) =>
+            await HandleSubscription(t => shippingProAPICollectionService.ConfigureGLSWebhookAuth(request, t), ct);
 
         #endregion subscribe
 

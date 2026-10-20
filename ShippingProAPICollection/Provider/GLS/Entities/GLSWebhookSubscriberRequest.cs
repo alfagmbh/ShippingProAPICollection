@@ -10,8 +10,11 @@ namespace ShippingProAPICollection.Provider.GLS.Entities
     {
         [JsonIgnore]
         public override ShippingProviderType ShippingProviderType => ShippingProviderType.GLS;
+        /// <summary>
+        /// Webhook user id returned by GLS POST /management/user.
+        /// </summary>
         [JsonProperty("id")]
-        public string Id => Guid.NewGuid().ToString();
+        public required string WebhookUserId { get; set; }
 
         [JsonProperty("customerId")]
         public required string CustomerId { get; set; }
@@ -25,7 +28,7 @@ namespace ShippingProAPICollection.Provider.GLS.Entities
         [JsonProperty("portalPassword")]
         public required string PortalPassword { get; set; }
 
-        [JsonProperty("hookUri")]
+        [JsonProperty("webhookUrl")]
         public override string HookUri { get; set; }
     }
 }

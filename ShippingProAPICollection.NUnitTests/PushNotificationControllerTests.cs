@@ -32,7 +32,13 @@ namespace ShippingProAPICollection.NUnitTests
 
         // The service is a concrete class, so it is used for real: with no providers configured every provider lookup
         // fails with an InvalidOperationException, and an unconfigured RabbitMqConnector fails on publish.
-        private PushNotificationController CreateController(bool withDpdProvider = false)
+        private const string GlsPushUser = "gls-push";
+        private const string GlsPushPassword = "secret";
+
+        private static string BasicHeader(string user, string password) =>
+            "Basic " + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{user}:{password}"));
+
+        private PushNotificationController CreateController(bool withDpdProvider = false, bool withGlsProvider = false, string? authorization = null)
         {
             var settings = new ShippingProAPICollectionSettings(new ShippingProAPIShipFromAddress
             {
@@ -58,10 +64,32 @@ namespace ShippingProAPICollection.NUnitTests
                 });
             }
 
+            if (withGlsProvider)
+            {
+                settings.AddSettings("GLS", new GLSSettings
+                {
+                    ApiDomain = "https://example.com",
+                    Username = "user",
+                    Password = "password",
+                    ApplicationID = "app",
+                    ApplicationSecret = "app-secret",
+                    ContactID = "contact",
+                    PushNotificationUsername = GlsPushUser,
+                    PushNotificationPassword = GlsPushPassword
+                });
+            }
+
             var rabbitMq = new RabbitMqConnector(Options.Create(new RabbitMqSecrets()));
             var service = new ShippingProAPICollectionService(_cache, settings, rabbitMq);
 
-            return new PushNotificationController(service, NullLogger<PushNotificationController>.Instance);
+            var httpContext = new DefaultHttpContext();
+            if (authorization != null)
+                httpContext.Request.Headers.Authorization = authorization;
+
+            return new PushNotificationController(service, NullLogger<PushNotificationController>.Instance)
+            {
+                ControllerContext = new ControllerContext { HttpContext = httpContext }
+            };
         }
 
         private static Task<IActionResult> InvokeHandleProcess(
@@ -106,6 +134,7 @@ namespace ShippingProAPICollection.NUnitTests
 
         private static GLSWebhookSubscriberRequest GlsSubscriberRequest(string hookUri) => new()
         {
+            WebhookUserId = "webhook-user",
             CustomerId = "customer",
             ContactId = "contact",
             PortalUsername = "user",
@@ -143,11 +172,47 @@ namespace ShippingProAPICollection.NUnitTests
         #region push notification endpoints
 
         [Test]
-        public async Task GLSPush_WithoutGlsProvider_ReturnsBadRequest()
+        public async Task GLSPush_WithoutGlsProvider_ReturnsUnauthorized()
         {
-            var result = await CreateController().GetPushNotification(new GLSParcelStatusChangeNotification(), CancellationToken.None);
+            var result = await CreateController(authorization: BasicHeader(GlsPushUser, GlsPushPassword))
+                .GetPushNotification(new GLSParcelStatusChangeNotification(), CancellationToken.None);
 
-            AssertBadRequest(result, ShippingErrorCode.UNKNOW, "Invalid operation.");
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("Bearer token")]
+        [TestCase("Basic !!!not-base64!!!")]
+        public async Task GLSPush_WithMissingOrMalformedAuthorization_ReturnsUnauthorized(string? authorization)
+        {
+            var controller = CreateController(withGlsProvider: true, authorization: authorization);
+
+            var result = await controller.GetPushNotification(new GLSParcelStatusChangeNotification(), CancellationToken.None);
+
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
+            Assert.That(controller.Response.Headers.WWWAuthenticate.ToString(), Is.EqualTo("Basic"));
+        }
+
+        [Test]
+        public async Task GLSPush_WithWrongCredentials_ReturnsUnauthorized()
+        {
+            var result = await CreateController(withGlsProvider: true, authorization: BasicHeader(GlsPushUser, "wrong"))
+                .GetPushNotification(new GLSParcelStatusChangeNotification(), CancellationToken.None);
+
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
+        }
+
+        [Test]
+        public async Task GLSPush_WithValidCredentials_IsProcessed()
+        {
+            // Authentication passes; the unconfigured RabbitMQ then fails on publish, which proves the notification was processed.
+            var notification = new GLSParcelStatusChangeNotification { ParcelId = "1", ParcelStatus = "DELIVERED" };
+
+            var result = await CreateController(withGlsProvider: true, authorization: BasicHeader(GlsPushUser, GlsPushPassword))
+                .GetPushNotification(notification, CancellationToken.None);
+
+            AssertInternalServerError(result);
         }
 
         [Test]
@@ -224,6 +289,63 @@ namespace ShippingProAPICollection.NUnitTests
             var result = await CreateController().Subscribe(GlsSubscriberRequest(hookUri), CancellationToken.None);
 
             AssertUnprocessable(result);
+        }
+
+        [TestCase("http://example.com/hook")]
+        [TestCase("not-a-url")]
+        public async Task GLSWebhookUser_WithNonHttpsUrl_ReturnsUnprocessableEntity(string url)
+        {
+            var result = await CreateController(withGlsProvider: true)
+                .CreateGLSWebhookUser(new GLSWebhookUserRequest { Name = "Customer - Solution", WebhookUrl = url }, CancellationToken.None);
+
+            AssertUnprocessable(result);
+        }
+
+        [TestCase("http://example.com/hook")]
+        [TestCase("not-a-url")]
+        public async Task GLSWebhookAuth_WithNonHttpsUrl_ReturnsUnprocessableEntity(string url)
+        {
+            var result = await CreateController(withGlsProvider: true)
+                .ConfigureGLSWebhookAuth(new GLSWebhookAuthRequest { WebhookUserId = "user", WebhookUrl = url }, CancellationToken.None);
+
+            AssertUnprocessable(result);
+        }
+
+        [Test]
+        public async Task GLSWebhookAuth_WithoutConfiguredCredentials_ReturnsBadRequest()
+        {
+            var settings = new ShippingProAPICollectionSettings(new ShippingProAPIShipFromAddress
+            {
+                Name = "n", Street = "s", ContactName = "c", CountryIsoA2Code = "DE", City = "c", Email = "e@e.de", PostCode = "1", Phone = "1"
+            });
+            settings.AddSettings("GLS", new GLSSettings
+            {
+                ApiDomain = "https://example.com", Username = "u", Password = "p", ApplicationID = "a", ApplicationSecret = "s", ContactID = "c"
+            });
+            var service = new ShippingProAPICollectionService(_cache, settings, new RabbitMqConnector(Options.Create(new RabbitMqSecrets())));
+
+            var result = await new PushNotificationController(service, NullLogger<PushNotificationController>.Instance)
+                .ConfigureGLSWebhookAuth(new GLSWebhookAuthRequest { WebhookUserId = "user", WebhookUrl = "https://example.com/hook" }, CancellationToken.None);
+
+            AssertBadRequest(result, ShippingErrorCode.UNKNOW, "Invalid operation.");
+        }
+
+        [Test]
+        public void GLSSubscriberRequest_Serialization_MatchesCookbookFieldNames()
+        {
+            var json = Newtonsoft.Json.Linq.JObject.Parse(
+                Newtonsoft.Json.JsonConvert.SerializeObject(GlsSubscriberRequest("https://example.com/hook")));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(json["id"]?.ToString(), Is.EqualTo("webhook-user"));
+                Assert.That(json["webhookUrl"]?.ToString(), Is.EqualTo("https://example.com/hook"));
+                Assert.That(json["customerId"]?.ToString(), Is.EqualTo("customer"));
+                Assert.That(json["contactId"]?.ToString(), Is.EqualTo("contact"));
+                Assert.That(json["portalUsername"]?.ToString(), Is.EqualTo("user"));
+                Assert.That(json["portalPassword"]?.ToString(), Is.EqualTo("password"));
+                Assert.That(json.ContainsKey("hookUri"), Is.False);
+            });
         }
 
         [Test]

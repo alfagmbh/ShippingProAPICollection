@@ -155,6 +155,32 @@ namespace ShippingProAPICollection
             }
         }
 
+        public async Task<WebHookSubsribeAttemptResponse> CreateGLSWebhookUser(GLSWebhookUserRequest request, CancellationToken ct = default)
+        {
+            EnsureHttpsUrl(request.WebhookUrl, nameof(request));
+            var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
+            return await serviceGLS.CreateWebhookUser(request, ct);
+        }
+
+        public async Task<WebHookSubsribeAttemptResponse> ConfigureGLSWebhookAuth(GLSWebhookAuthRequest request, CancellationToken ct = default)
+        {
+            EnsureHttpsUrl(request.WebhookUrl, nameof(request));
+            var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
+            return await serviceGLS.ConfigureWebhookAuth(request, ct);
+        }
+
+        /// <summary>
+        /// Validates the Authorization header of an incoming GLS push notification. Without a configured GLS provider it is always invalid.
+        /// </summary>
+        public bool IsValidGLSPushCredentials(string? authorizationHeader) =>
+            providerServices.Values.OfType<GLSShipmentService>().Any(x => x.IsValidPushCredentials(authorizationHeader));
+
+        private static void EnsureHttpsUrl(string? url, string paramName)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+                throw new ArgumentException("WebhookUrl must be an absolute https URL.", paramName);
+        }
+
         public async Task<WebHookSubsribeAttemptResponse> ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
         {
             // Activation only uses values from the request, so a single call is enough regardless of how many DHL contracts exist.
