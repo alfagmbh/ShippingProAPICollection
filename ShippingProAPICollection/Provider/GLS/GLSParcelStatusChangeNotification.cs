@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Newtonsoft.Json;
 using ShippingProAPICollection.Models.Entities;
 
 namespace ShippingProAPICollection.Provider.GLS
@@ -8,6 +9,13 @@ namespace ShippingProAPICollection.Provider.GLS
     {
         [JsonIgnore]
         public override ShippingProviderType ShippingProviderType => ShippingProviderType.GLS;
+
+        /// <summary>
+        /// Authorization header of the incoming request, never part of the payload.
+        /// </summary>
+        [JsonIgnore]
+        [BindNever]
+        public string? AuthorizationHeader { get; set; }
 
         [JsonProperty("parcelId")]
         public string? ParcelId { get; set; }

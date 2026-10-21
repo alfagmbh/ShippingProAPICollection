@@ -51,12 +51,13 @@ namespace ShippingProAPICollection.Provider
         public float GetMaxPackageWeight();
 
         /// <summary>
-        /// Subscribe to a webhook for tracking updates
+        /// Sets up push notifications for tracking updates (auth and subscribe as needed) using the provider settings.
+        /// Throws when the provider rejects the setup.
         /// </summary>
-        /// <param name="webhookUrl">The URL of the webhook to subscribe to</param>
+        /// <param name="hookUri">The URL of the webhook the provider should call</param>
         /// <param name="cancelToken">A token to cancel the operation</param>
         /// <returns></returns>
-        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken cancelToken);
+        public Task InitializePushNotification(string hookUri, CancellationToken cancelToken);
 
         /// <summary>
         /// Process incoming webhook data
@@ -64,6 +65,6 @@ namespace ShippingProAPICollection.Provider
         /// <param name="webhookData"></param>
         /// <param name="cancelToken"></param>
         /// <returns></returns>
-        public Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
+        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
     }
 }

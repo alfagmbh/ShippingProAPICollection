@@ -1,8 +1,5 @@
-using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
-using System.Collections.Concurrent;
-using System.Security.Cryptography;
-using System.Text;
+using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -17,7 +14,7 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
-using ShippingProAPICollection.RabbitMq;
+using System.Collections.Concurrent;
 
 namespace ShippingProAPICollection.Provider.GLS
 {
@@ -26,13 +23,11 @@ namespace ShippingProAPICollection.Provider.GLS
         private string apiContentType = "application/glsVersion1+json";
         private readonly GLSSettings providerSettings = null!;
         private readonly ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
-        private readonly RabbitMqConnector _rabbitMqConnector;
 
-        public GLSShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, GLSSettings providerSettings, RabbitMqConnector rabbitMqConnector)
+        public GLSShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, GLSSettings providerSettings)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
-            this.providerSettings = providerSettings; 
-            this._rabbitMqConnector = rabbitMqConnector;    
+            this.providerSettings = providerSettings;
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -230,8 +225,9 @@ namespace ShippingProAPICollection.Provider.GLS
         /// </summary>
         public async Task<WebHookSubsribeAttemptResponse> ConfigureWebhookAuth(GLSWebhookAuthRequest request, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(providerSettings.PushNotificationUsername) || string.IsNullOrEmpty(providerSettings.PushNotificationPassword))
-                throw new InvalidOperationException("PushNotificationUsername and PushNotificationPassword must be configured for GLS.");
+            var pushNotificationSettings = providerSettings.PushNotificationSettings;
+            if (string.IsNullOrEmpty(pushNotificationSettings.WebhookUsername) || string.IsNullOrEmpty(pushNotificationSettings.WebhookPassword))
+                throw new InvalidOperationException("WebhookUsername and WebhookPassword must be configured for GLS push notifications.");
 
             return await CallPushApi(WebhookAuthUrl, new
             {
@@ -240,37 +236,68 @@ namespace ShippingProAPICollection.Provider.GLS
                 authType = "BASIC",
                 authData = new
                 {
-                    user = providerSettings.PushNotificationUsername,
-                    password = providerSettings.PushNotificationPassword
+                    user = pushNotificationSettings.WebhookUsername,
+                    password = pushNotificationSettings.WebhookPassword
                 }
             }, ct);
         }
 
         /// <summary>
-        /// Checks the Basic Authorization header of an incoming push notification against the configured credentials.
-        /// Fails closed when no credentials are configured.
+        /// Runs the whole GLS push setup from the provider settings: webhook user + auth (only while no webhook user id is configured), then the subscription.
+        /// Throws when GLS rejects one of the steps.
         /// </summary>
-        public bool IsValidPushCredentials(string? authorizationHeader)
+        public async Task InitializePushNotification(string hookUri, CancellationToken ct)
         {
-            if (string.IsNullOrEmpty(providerSettings.PushNotificationUsername) || string.IsNullOrEmpty(providerSettings.PushNotificationPassword))
-                return false;
+            var pushNotificationSettings = providerSettings.PushNotificationSettings;
+            if (string.IsNullOrEmpty(providerSettings.CustomerID) || string.IsNullOrEmpty(providerSettings.PortalUsername) || string.IsNullOrEmpty(providerSettings.PortalPassword))
+                throw new InvalidOperationException("CustomerID, PortalUsername and PortalPassword must be configured for GLS.");
 
-            const string scheme = "Basic ";
-            if (authorizationHeader is null || !authorizationHeader.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
-                return false;
+            var webhookUserId = pushNotificationSettings.WebhookUserId;
 
-            byte[] provided;
+            if (string.IsNullOrEmpty(webhookUserId))
+            {
+                if (string.IsNullOrEmpty(pushNotificationSettings.WebhookName))
+                    throw new InvalidOperationException("WebhookName must be configured for GLS push notifications.");
+
+                var userResponse = await CreateWebhookUser(new GLSWebhookUserRequest { Name = pushNotificationSettings.WebhookName, WebhookUrl = hookUri }, ct);
+                EnsureSuccess(userResponse, "webhook user");
+
+                webhookUserId = ParseWebhookUserId(userResponse.Message)
+                    ?? throw new GLSException(ShippingErrorCode.UNKNOW, "GLS webhook user response did not contain an id.");
+
+                var authResponse = await ConfigureWebhookAuth(new GLSWebhookAuthRequest { WebhookUserId = webhookUserId, WebhookUrl = hookUri }, ct);
+                EnsureSuccess(authResponse, "webhook auth");
+            }
+
+            var subscribeResponse = await SubscribeToWebhook(new GLSWebhookSubscriberRequest
+            {
+                WebhookUserId = webhookUserId,
+                CustomerId = providerSettings.CustomerID,
+                ContactId = providerSettings.ContactID,
+                PortalUsername = providerSettings.PortalUsername,
+                PortalPassword = providerSettings.PortalPassword,
+                HookUri = hookUri
+            }, ct);
+
+            EnsureSuccess(subscribeResponse, "subscription");
+        }
+
+        private static void EnsureSuccess(WebHookSubsribeAttemptResponse response, string step)
+        {
+            if (!response.IsSuccess)
+                throw new GLSException(ShippingErrorCode.UNKNOW, $"GLS rejected the {step} request: {response.Message}", null);
+        }
+
+        private static string? ParseWebhookUserId(string? userResponseContent)
+        {
             try
             {
-                provided = Convert.FromBase64String(authorizationHeader.Substring(scheme.Length).Trim());
+                return JObject.Parse(userResponseContent ?? string.Empty)["id"]?.ToString();
             }
-            catch (FormatException)
+            catch (JsonException)
             {
-                return false;
+                return null;
             }
-
-            var expected = Encoding.UTF8.GetBytes($"{providerSettings.PushNotificationUsername}:{providerSettings.PushNotificationPassword}");
-            return CryptographicOperations.FixedTimeEquals(provided, expected);
         }
 
         private async Task<string> GetPushAccessToken(CancellationToken ct)
@@ -320,12 +347,20 @@ namespace ShippingProAPICollection.Provider.GLS
             };
         }
 
-        public async Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
+            // GLS calls with the BASIC credentials registered during the push setup; nothing is processed without them.
             if (parcelStatusChangeNotification is not GLSParcelStatusChangeNotification glsParcelStatusChangeNotification ||
-                glsParcelStatusChangeNotification.ParcelId is null ||
+                !providerSettings.PushNotificationSettings.IsValidAuthorizationHeader(glsParcelStatusChangeNotification.AuthorizationHeader))
+                throw new UnauthorizedAccessException("Invalid GLS push notification credentials.");
+
+            if (glsParcelStatusChangeNotification.ParcelId is null ||
                 glsParcelStatusChangeNotification.ParcelStatus is null)
-                throw new ArgumentException("Invalid data");
+                return new ParcelTrackingEventResult()
+                {
+                    Status = NotificationResultStatus.Failed,
+                    Message = "Invalid GLS parcel status change notification"
+                };
 
             //transform the webhook data into a model
             ParcelTrackingEvent? trackParcelResponse = new()
@@ -335,11 +370,12 @@ namespace ShippingProAPICollection.Provider.GLS
                 APIValue = glsParcelStatusChangeNotification.EventCode,
                 CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
             };
-            //send to rabbit mq
-            await _rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+
+            return new ParcelTrackingEventResult()
             {
-                Event = trackParcelResponse
-            }, cancelToken);
+                Status = NotificationResultStatus.Success,
+                TrackingEvent = [trackParcelResponse]
+            };
         }
 
         #endregion parcel tracking

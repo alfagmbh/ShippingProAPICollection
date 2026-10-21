@@ -429,14 +429,14 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             throw new NotImplementedException();
         }
 
-        public Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken)
+        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken)
         {
             throw new TOFException(ShippingErrorCode.NOT_AVAILABLE, "Fehler beim Verarbeiten der ParcelStatusChangeNotification");
         }
 
-        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken cancelToken)
+        public Task InitializePushNotification(string hookUri, CancellationToken cancelToken)
         {
-            throw new TOFException(ShippingErrorCode.NOT_AVAILABLE, "Fehler beim Verarbeiten der ParcelStatusChangeNotification");
+            throw new NotImplementedException();
         }
 
         #endregion Storage

@@ -7,9 +7,7 @@ using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
-using ShippingProAPICollection.Provider.GLS.Entities;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
-using ShippingProAPICollection.RabbitMq;
 
 namespace ShippingProAPICollection
 {
@@ -17,28 +15,28 @@ namespace ShippingProAPICollection
     {
         public Dictionary<string, IShippingProviderService> providerServices = new Dictionary<string, IShippingProviderService>();
 
-        public ShippingProAPICollectionService(IMemoryCache _cache, ShippingProAPICollectionSettings providerSettings, RabbitMqConnector rabbitMqConnector)
+        public ShippingProAPICollectionService(IMemoryCache _cache, ShippingProAPICollectionSettings providerSettings)
         {
             Dictionary<string, ProviderSettings> providers = providerSettings.GetProviders();
 
             foreach (KeyValuePair<string, ProviderSettings> provider in providers)
             {
-                providerServices.Add(provider.Key, BuildProviderService(providerSettings.DefaultShipFromAddress, provider.Value, _cache, rabbitMqConnector));
+                providerServices.Add(provider.Key, BuildProviderService(providerSettings.DefaultShipFromAddress, provider.Value, _cache));
             }
         }
 
-        private IShippingProviderService BuildProviderService(ShippingProAPIShipFromAddress defaultShipFromAddress, ProviderSettings settings, IMemoryCache _cache, RabbitMqConnector rabbitMqConnector)
+        private IShippingProviderService BuildProviderService(ShippingProAPIShipFromAddress defaultShipFromAddress, ProviderSettings settings, IMemoryCache _cache)
         {
             switch (settings)
             {
                 case GLSSettings providerSettings:
-                    return new GLSShipmentService(defaultShipFromAddress, providerSettings, rabbitMqConnector);
+                    return new GLSShipmentService(defaultShipFromAddress, providerSettings);
 
                 case DHLSettings providerSettings:
-                    return new DHLShipmentService(defaultShipFromAddress, providerSettings, rabbitMqConnector);
+                    return new DHLShipmentService(defaultShipFromAddress, providerSettings);
 
                 case DPDSettings providerSettings:
-                    return new DPDShipmentService(defaultShipFromAddress, providerSettings, _cache, rabbitMqConnector);
+                    return new DPDShipmentService(defaultShipFromAddress, providerSettings, _cache);
 
                 case TOFSettings providerSettings:
                     return new TOFShipmentService(defaultShipFromAddress, providerSettings, _cache);
@@ -102,90 +100,78 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException("Unknown shipping provider");
         }
 
-        public async Task ProcessPushNotification(ParcelStatusChangeNotification notificationData, CancellationToken ct = default)
+        /// <summary>
+        /// Processes an incoming provider push. DPD pushes are passed as a key/value map of the query string,
+        /// GLS pushes are authorized with the Authorization header of the request by the GLS provider.
+        /// </summary>
+        public Task<ParcelTrackingEventResult> ProcessPushNotification(ShippingProviderType type, object notificationData, string? authorizationHeader = null, CancellationToken ct = default)
         {
-            switch (notificationData.ShippingProviderType)
-            {
-                case ShippingProviderType.DHL:
-                    var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().FirstOrDefault();
-                    await serviceDHL.ProcessParcelStatusChangeNotification(
-                        notificationData is DHLParcelStatusChangeNotification dhlNotification
-                        ? dhlNotification
-                        : throw new InvalidOperationException("Invalid notification type"), ct);
-                    break;
-
-                case ShippingProviderType.DPD:
-                    var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().FirstOrDefault();
-                    await serviceDPD.ProcessParcelStatusChangeNotification(
-                        notificationData is DPDParcelStatusChangeNotification dpdNotification
-                        ? dpdNotification
-                        : throw new InvalidOperationException("Invalid notification type"), ct);
-                    break;
-
-                case ShippingProviderType.GLS:
-                    var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().FirstOrDefault();
-                    await serviceGLS.ProcessParcelStatusChangeNotification(
-                        notificationData is GLSParcelStatusChangeNotification glsNotification
-                        ? glsNotification
-                        : throw new InvalidOperationException("Invalid notification type"), ct);
-                    break;
-
-                default:
-                    throw new InvalidOperationException("Unknown shipping provider");
-            }
-        }
-
-        public async Task<WebHookSubsribeAttemptResponse> SubscribeToPushNotification(SubscriberRequest request, CancellationToken ct = default)
-        {
-            if (!Uri.TryCreate(request.HookUri, UriKind.Absolute, out var hookUri) || hookUri.Scheme != Uri.UriSchemeHttps)
-                throw new ArgumentException("HookUri must be an absolute https URL.", nameof(request));
-
-            switch (request.ShippingProviderType)
+            switch (type)
             {
                 case ShippingProviderType.DHL:
                     var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-                    return await serviceDHL.SubscribeToWebhook(request is DHLWebhookSubscriberRequest dhlRequest ? dhlRequest : throw new InvalidOperationException("Invalid request type"), ct);
+                    return Task.FromResult(serviceDHL.ProcessParcelStatusChangeNotification(
+                        notificationData is DHLParcelStatusChangeNotification dhlNotification
+                        ? dhlNotification
+                        : throw new InvalidOperationException("Invalid notification type"), ct));
+
+                case ShippingProviderType.DPD:
+                    var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().First();
+                    return Task.FromResult(serviceDPD.ProcessParcelStatusChangeNotification(
+                        notificationData is IReadOnlyDictionary<string, string?> dpdValues
+                        ? DPDParcelStatusChangeNotification.FromKeyValues(dpdValues)
+                        : throw new InvalidOperationException("Invalid notification type"), ct));
 
                 case ShippingProviderType.GLS:
                     var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
-                    return await serviceGLS.SubscribeToWebhook(request is GLSWebhookSubscriberRequest glsRequest ? glsRequest : throw new InvalidOperationException("Invalid request type"), ct);
+                    var glsNotification = notificationData as GLSParcelStatusChangeNotification
+                        ?? throw new InvalidOperationException("Invalid notification type");
+                    glsNotification.AuthorizationHeader = authorizationHeader;
+                    return Task.FromResult(serviceGLS.ProcessParcelStatusChangeNotification(glsNotification, ct));
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
             }
         }
 
-        public async Task<WebHookSubsribeAttemptResponse> CreateGLSWebhookUser(GLSWebhookUserRequest request, CancellationToken ct = default)
-        {
-            EnsureHttpsUrl(request.WebhookUrl, nameof(request));
-            var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
-            return await serviceGLS.CreateWebhookUser(request, ct);
-        }
-
-        public async Task<WebHookSubsribeAttemptResponse> ConfigureGLSWebhookAuth(GLSWebhookAuthRequest request, CancellationToken ct = default)
-        {
-            EnsureHttpsUrl(request.WebhookUrl, nameof(request));
-            var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
-            return await serviceGLS.ConfigureWebhookAuth(request, ct);
-        }
-
         /// <summary>
-        /// Validates the Authorization header of an incoming GLS push notification. Without a configured GLS provider it is always invalid.
+        /// Runs the push notification setup workflow of the provider (auth, subscribe) using the provider settings.
+        /// DHL subscriptions still have to be activated via <see cref="ActivateDHLSubscriber"/>.
         /// </summary>
-        public bool IsValidGLSPushCredentials(string? authorizationHeader) =>
-            providerServices.Values.OfType<GLSShipmentService>().Any(x => x.IsValidPushCredentials(authorizationHeader));
+        public async Task InitializePushNotification(ShippingProviderType type, string hookUri, CancellationToken ct = default)
+        {
+            EnsureHttpsUrl(hookUri, nameof(hookUri));
+
+            switch (type)
+            {
+                case ShippingProviderType.DHL:
+                    await GetServiceProviderFromType<DHLShipmentService>().First().InitializePushNotification(hookUri, ct);
+                    break;
+
+                case ShippingProviderType.GLS:
+                    await GetServiceProviderFromType<GLSShipmentService>().First().InitializePushNotification(hookUri, ct);
+                    break;
+
+                case ShippingProviderType.DPD:
+                    // DPD pushes are configured on the DPD side, nothing to set up here.
+                    break;
+
+                default:
+                    throw new InvalidOperationException("Unknown shipping provider");
+            }
+        }
 
         private static void EnsureHttpsUrl(string? url, string paramName)
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-                throw new ArgumentException("WebhookUrl must be an absolute https URL.", paramName);
+                throw new ArgumentException("Hook URL must be an absolute https URL.", paramName);
         }
 
-        public async Task<WebHookSubsribeAttemptResponse> ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
+        public async Task ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
         {
             // Activation only uses values from the request, so a single call is enough regardless of how many DHL contracts exist.
             var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-            return await serviceDHL.ActivateSubscriber(request, ct);
+            await serviceDHL.ActivateSubscriber(request, ct);
         }
 
         public async Task Confirm(string contractID, string confirmId, CancellationToken ct = default)

@@ -1,4 +1,5 @@
 using ShippingProAPICollection.Models.Entities;
+using ShippingProAPICollection.Provider.DHL.Entities;
 
 namespace ShippingProAPICollection.Provider.DHL
 {
@@ -23,5 +24,30 @@ namespace ShippingProAPICollection.Provider.DHL
         /// </summary>
         public required string APILanguage { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
+
+        public required DHLPushNotificationSettings PushNotificationSettings { get; set; }
+    }
+
+    public class DHLPushNotificationSettings
+    {
+        public required string ApiDomain { get; set; }
+        public required string APIKey { get; set; }
+        public required string APILanguage { get; set; }
+        public required string Format { get; set; }
+        public required string AuthenticationHeader { get; set; }
+        public required string AuthenticationToken { get; set; }
+        public required string WebhookHeaderName { get; set; }
+        public required string WebhookHeaderValue { get; set; }
+        public required string AccountID { get; set; }
+        /// <summary>
+        /// One push subscription is registered per entry.
+        /// </summary>
+        public required DHLPushSubscription[] Subscriptions { get; set; }
+    }
+
+    public class DHLPushSubscription : PushNotificationSettings
+    {
+        public required DHLServiceDivisionTypes Service { get; set; }
+        public required DHLNotificationEventTypes[] Events { get; set; }
     }
 }

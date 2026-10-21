@@ -25,5 +25,11 @@ namespace ShippingProAPICollection.Provider
         public string ContractID { get; set; } = null!;
 
         public abstract float MaxPackageWeight { get; set; }
+
+    }
+
+    public abstract class PushNotificationSettings
+    {
+       public bool IsActive { get; set; }
     }
 }

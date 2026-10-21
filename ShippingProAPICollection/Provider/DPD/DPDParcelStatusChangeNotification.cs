@@ -1,7 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
-using ShippingProAPICollection.Models.Entities;
-using System.ComponentModel.DataAnnotations;
+﻿using ShippingProAPICollection.Models.Entities;
 using System.Text.Json.Serialization;
 
 namespace ShippingProAPICollection.Provider.DPD
@@ -11,25 +8,16 @@ namespace ShippingProAPICollection.Provider.DPD
 
         public override ShippingProviderType ShippingProviderType => ShippingProviderType.DPD;
 
-        [FromQuery(Name = "pushid")]
-        [Required]
         public string? PushId { get; set; }
 
-        [FromQuery(Name = "ref")]
         public string? Reference { get; set; }
 
-        [FromQuery(Name = "pnr")]
-        [Required]
         public string? ParcelNumber { get; set; }
 
-        [FromQuery(Name = "depot")]
         public string? Depot { get; set; }
 
-        [FromQuery(Name = "status")]
-        [Required]
         public string? Status { get; set; }
 
-        [FromQuery(Name = "statusdate")]
         public string? StatusDateRaw { get; set; }
 
         [JsonIgnore]
@@ -43,20 +31,43 @@ namespace ShippingProAPICollection.Provider.DPD
                 ? result
                 : (DateTime?)null;
 
-        [FromQuery(Name = "weight")]
         public string? Weight { get; set; }
 
-        [FromQuery(Name = "receiver")]
         public string? Receiver { get; set; }
 
-        [FromQuery(Name = "pod")]
         public string? ProofOfDelivery { get; set; }
 
-        [FromQuery(Name = "services")]
         public string? Services { get; set; }
 
-        [FromQuery(Name = "scaninfo")]
         public string? ScanInfo { get; set; }
+
+        /// <summary>
+        /// Builds the notification from the key/value pairs of the DPD push query string (keys are matched case-insensitively):
+        /// pushid, ref, pnr, depot, status, statusdate, weight, receiver, pod, services, scaninfo.
+        /// </summary>
+        public static DPDParcelStatusChangeNotification FromKeyValues(IReadOnlyDictionary<string, string?> values)
+        {
+            var map = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in values)
+                map[pair.Key] = pair.Value;
+
+            string? Get(string key) => map.TryGetValue(key, out var value) ? value : null;
+
+            return new DPDParcelStatusChangeNotification
+            {
+                PushId = Get("pushid"),
+                Reference = Get("ref"),
+                ParcelNumber = Get("pnr"),
+                Depot = Get("depot"),
+                Status = Get("status"),
+                StatusDateRaw = Get("statusdate"),
+                Weight = Get("weight"),
+                Receiver = Get("receiver"),
+                ProofOfDelivery = Get("pod"),
+                Services = Get("services"),
+                ScanInfo = Get("scaninfo")
+            };
+        }
 
     }
 }

@@ -2,6 +2,8 @@
 
 using DPDLoginService2_0;
 using DPDShipmentService4_4;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
 using RestSharp;
@@ -10,7 +12,7 @@ using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DPD.Entities;
-using ShippingProAPICollection.RabbitMq;
+using System.Xml.Linq;
 
 namespace ShippingProAPICollection.Provider.DPD
 {
@@ -18,15 +20,13 @@ namespace ShippingProAPICollection.Provider.DPD
     {
         private readonly IMemoryCache _cache;
         private readonly DPDSettings providerSettings = null!;
-        private readonly ShippingProAPIShipFromAddress defaultShipFromAddress = null!;          
-        private readonly RabbitMqConnector _rabbitMqConnector;   
+        private readonly ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
 
-        public DPDShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DPDSettings providerSettings, IMemoryCache cache, RabbitMqConnector rabbitMqConnector)
+        public DPDShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DPDSettings providerSettings, IMemoryCache cache)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
             this.providerSettings = providerSettings;
             _cache = cache;
-            _rabbitMqConnector = rabbitMqConnector;
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -125,12 +125,16 @@ namespace ShippingProAPICollection.Provider.DPD
             return providerSettings.MaxPackageWeight;
         }
 
-        public async Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not DPDParcelStatusChangeNotification dpdParcelStatusChangeNotification ||
-               dpdParcelStatusChangeNotification.ParcelNumber is null ||
-               dpdParcelStatusChangeNotification.Status is null)
-                throw new ArgumentException("Invalid data");
+                dpdParcelStatusChangeNotification.ParcelNumber is null ||
+                dpdParcelStatusChangeNotification.Status is null)
+                return new ParcelTrackingEventResult()
+                {
+                    Status = NotificationResultStatus.Failed,
+                    Message = "Invalid DPD parcel status change notification",
+                };
 
             // Process the parcel status change notification here
             ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent
@@ -139,12 +143,22 @@ namespace ShippingProAPICollection.Provider.DPD
                 Status = DPDTrackingStatusTypes.GetTrackingStatusType(dpdParcelStatusChangeNotification.Status).ToString(),
                 APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
             };
-            // Send to RabbitMq
-             await _rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
+
+            return new ParcelTrackingEventResult()
             {
-                Event = trackParcelResponse
-            }, cancelToken);
-            
+                Status = NotificationResultStatus.Success,
+                Message = DpdAcknowledge(dpdParcelStatusChangeNotification.PushId!),
+                TrackingEvent = [trackParcelResponse]
+            };
+
+            static string DpdAcknowledge(string pushId) => JsonConvert.SerializeObject(new ContentResult()
+            {
+                Content = new XElement("push",
+                              new XElement("pushid", pushId),
+                                           new XElement("status", "OK")).ToString(SaveOptions.DisableFormatting),
+                ContentType = "application/xml",
+                StatusCode = StatusCodes.Status200OK
+            });
         }
 
         private storeOrders CreateRequestModel(DPDShipmentRequestModel request)
@@ -372,12 +386,10 @@ namespace ShippingProAPICollection.Provider.DPD
             }
         }
 
-     
-
-        public Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken cancelToken)
+        public Task InitializePushNotification(string hookUri, CancellationToken cancelToken)
         {
-            throw new DPDException(ShippingErrorCode.NOT_AVAILABLE, "Feature not available for DPD");
+            // DPD pushes are configured on the DPD side, nothing to set up here.
+            return Task.CompletedTask;
         }
-
     }
 }

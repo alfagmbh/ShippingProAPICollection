@@ -9,13 +9,16 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
         public string Format { get; set; }
 
         [JsonProperty("service")]
-        public string Service { get; set; }
+        public DHLServiceDivisionTypes Service { get; set; }
 
         [JsonProperty("hook")]
         public DHLWebhookHook Hook { get; set; }
 
         [JsonProperty("events")]
-        public List<string> Events { get; set; } = new List<string> { "Transit", "Delivered", "Pre-Transit", "Failure", "Unknown" };
+        public List<DHLNotificationEventTypes> Events { get; set; } = new List<DHLNotificationEventTypes>
+        {
+            DHLNotificationEventTypes.Transit, DHLNotificationEventTypes.Delivered, DHLNotificationEventTypes.PreTransit, DHLNotificationEventTypes.Failure, DHLNotificationEventTypes.Unknown
+        };
 
         [JsonProperty("type")]
         public string Type { get; set; }

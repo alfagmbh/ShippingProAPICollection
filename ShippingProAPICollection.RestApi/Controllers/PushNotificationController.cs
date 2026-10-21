@@ -1,16 +1,11 @@
+using System.Net;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using ShippingProAPICollection.Models;
+using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
-using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DHL.Entities;
-using ShippingProAPICollection.Provider.DPD;
-using ShippingProAPICollection.Provider.GLS;
-using ShippingProAPICollection.Provider.GLS.Entities;
 using ShippingProAPICollection.RestApi.Entities.Error;
-using System.Net;
-using System.Xml.Linq;
 
 namespace ShippingProAPICollection.RestApi.Controllers
 {
@@ -31,109 +26,34 @@ namespace ShippingProAPICollection.RestApi.Controllers
         #region push notification endpoits
 
         [HttpPost]
-        [Route("gls")]
+        [Route("{type}")]
+        [ProducesResponseType(typeof(object), (int)HttpStatusCode.OK)]
         [ProducesResponseType(typeof(void), (int)HttpStatusCode.Unauthorized)]
-        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] GLSParcelStatusChangeNotification notificationData, CancellationToken ct)
-        {
-            // GLS sends the BASIC credentials registered via gls/webhook-auth.
-            if (!shippingProAPICollectionService.IsValidGLSPushCredentials(Request.Headers.Authorization))
-            {
-                Response.Headers.WWWAuthenticate = "Basic";
-                return Unauthorized();
-            }
+        public async Task<IActionResult> ProcessPushNotification([FromRoute] ShippingProviderType type, [FromBody] object notificationData, CancellationToken ct) =>
+            await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(type, notificationData, Request.Headers.Authorization.ToString(), t), ct);
 
-            return await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(notificationData, t), ct);
-        }
-
-        [HttpPost]
-        [Route("dhl")]
-        public async Task<IActionResult> GetPushNotification([FromBody, BindRequired] DHLParcelStatusChangeNotification notificationData, CancellationToken ct) =>
-            await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(notificationData, t), ct);
-
-        [HttpGet]
-        [ProducesResponseType(typeof(string), StatusCodes.Status200OK, "application/xml")]
-        [Route("dpd")]
-        public async Task<IActionResult> GetPushNotification([FromQuery] DPDParcelStatusChangeNotification notificationData, CancellationToken ct)
-        {
-            if (string.IsNullOrWhiteSpace(notificationData.PushId))
-                return BadRequest(); // empty body, no XML
-
-            return await HandleProcess(
-                t => shippingProAPICollectionService.ProcessPushNotification(notificationData, t),
-                ct,
-                () => DpdAcknowledge(notificationData.PushId));
-
-            static ContentResult DpdAcknowledge(string pushId) => new()
-            {
-                Content = new XElement("push",
-                    new XElement("pushid", pushId),
-                        new XElement("status", "OK")
-                                      ).ToString(SaveOptions.DisableFormatting),
-                ContentType = "application/xml",
-                StatusCode = StatusCodes.Status200OK
-            };
-        }
 
         #endregion push notification endpoits
 
         #region subscribe
 
+        /// <summary>
+        /// Sets up push notifications for the provider (auth and subscribe as needed) using the provider settings.
+        /// DHL subscriptions still have to be activated via dhl/activate.
+        /// </summary>
         [HttpPost]
-        [Route("dhl/subscribe")]
-        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
-        public async Task<IActionResult> Subscribe([FromBody, BindRequired] DHLWebhookSubscriberRequest notificationData, CancellationToken ct) =>
-            await HandleSubscription(t => shippingProAPICollectionService.SubscribeToPushNotification(notificationData, t), ct);
+        [Route("{type}/ini")]
+        public async Task<IActionResult> Ini([FromRoute] ShippingProviderType type, [FromBody, BindRequired] PushInitRequest request, CancellationToken ct) =>
+            await HandleProcess(t => shippingProAPICollectionService.InitializePushNotification(type, request.HookUri, t), ct);
 
         [HttpPost]
         [Route("dhl/activate")]
-        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
         public async Task<IActionResult> ActivateDHLSubscriber([FromBody, BindRequired] DHLSubscriberActivatorRequest request, CancellationToken ct) =>
-            await HandleSubscription(t => shippingProAPICollectionService.ActivateDHLSubscriber(request, t), ct);
-
-        [HttpPost]
-        [Route("gls/subscribe")]
-        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
-        public async Task<IActionResult> Subscribe([FromBody, BindRequired] GLSWebhookSubscriberRequest notificationData, CancellationToken ct) =>
-            await HandleSubscription(t => shippingProAPICollectionService.SubscribeToPushNotification(notificationData, t), ct);
-
-        /// <summary>
-        /// GLS setup step 1: registers the webhook user. The returned message contains the webhook user id.
-        /// </summary>
-        [HttpPost]
-        [Route("gls/webhook-user")]
-        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
-        public async Task<IActionResult> CreateGLSWebhookUser([FromBody, BindRequired] GLSWebhookUserRequest request, CancellationToken ct) =>
-            await HandleSubscription(t => shippingProAPICollectionService.CreateGLSWebhookUser(request, t), ct);
-
-        /// <summary>
-        /// GLS setup step 2: registers the BASIC credentials (from the GLS settings) GLS uses to call the webhook URL.
-        /// </summary>
-        [HttpPost]
-        [Route("gls/webhook-auth")]
-        [ProducesResponseType(typeof(PushSubscriptionResponse), (int)HttpStatusCode.OK)]
-        public async Task<IActionResult> ConfigureGLSWebhookAuth([FromBody, BindRequired] GLSWebhookAuthRequest request, CancellationToken ct) =>
-            await HandleSubscription(t => shippingProAPICollectionService.ConfigureGLSWebhookAuth(request, t), ct);
+            await HandleProcess(t => shippingProAPICollectionService.ActivateDHLSubscriber(request, t), ct);
 
         #endregion subscribe
 
         #region private handle method
-
-        private async Task<IActionResult> HandleSubscription(Func<CancellationToken, Task<WebHookSubsribeAttemptResponse>> subscribe, CancellationToken ct)
-        {
-            WebHookSubsribeAttemptResponse? result = null;
-
-            return await HandleProcess(
-                async t => result = await subscribe(t),
-                ct,
-                () =>
-                {
-                    if (result is { IsSuccess: true })
-                        return Ok(new PushSubscriptionResponse(true, result.Message));
-
-                    logger.LogWarning(result?.Exception, "Provider rejected the webhook subscription request: {Message}", result?.Message);
-                    return BadRequest(new BadRequestReponse(new ShippingProviderErrorCodeException(ShippingErrorCode.UNKNOW, "Subscription was not accepted by the provider.", null)));
-                });
-        }
 
         private async Task<IActionResult> HandleProcess(Func<CancellationToken, Task> process, CancellationToken ct, Func<IActionResult>? onSuccess = null)
         {
@@ -145,6 +65,12 @@ namespace ShippingProAPICollection.RestApi.Controllers
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 return StatusCode(ClientClosedRequest);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                logger.LogWarning(ex, "Unauthorized push notification request.");
+                Response.Headers.WWWAuthenticate = "Basic";
+                return Unauthorized();
             }
             catch (ShippingProviderErrorCodeException ex)
             {
@@ -172,5 +98,5 @@ namespace ShippingProAPICollection.RestApi.Controllers
         #endregion private handle method
     }
 
-    public record PushSubscriptionResponse(bool IsSuccess, string? Message);
+    public record PushInitRequest(string HookUri);
 }

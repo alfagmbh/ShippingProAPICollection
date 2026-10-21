@@ -9,8 +9,6 @@ using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Models.Utils;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DHL.Entities.VASService;
-using ShippingProAPICollection.Provider.GLS;
-using ShippingProAPICollection.RabbitMq;
 
 namespace ShippingProAPICollection.Provider.DHL
 {
@@ -18,13 +16,11 @@ namespace ShippingProAPICollection.Provider.DHL
     {
         private DHLSettings providerSettings = null!;
         private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
-        private RabbitMqConnector rabbitMqConnector = null!;
 
-        public DHLShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DHLSettings providerSettings, RabbitMqConnector rabbitMqConnector)
+        public DHLShipmentService(ShippingProAPIShipFromAddress defaultShipFromAddress, DHLSettings providerSettings)
         {
             this.defaultShipFromAddress = defaultShipFromAddress;
             this.providerSettings = providerSettings;
-            this.rabbitMqConnector = rabbitMqConnector;
         }
 
         public async Task<List<RequestShippingLabelResponse>> RequestLabel(RequestShipmentBase request, CancellationToken cancelToken = default)
@@ -419,63 +415,57 @@ namespace ShippingProAPICollection.Provider.DHL
             }
         }
 
-        public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken ct = default)
+        /// <summary>
+        /// Subscribes to DHL push notifications for every configured service division / event combination.
+        /// The subscriptions must afterwards be activated via <see cref="ActivateSubscriber"/>.
+        /// </summary>
+        public async Task InitializePushNotification(string hookUri, CancellationToken ct = default)
         {
-            if (subscriberRequest is not DHLWebhookSubscriberRequest dhlSubscriberRequest)
-                throw new ArgumentException("Invalid subscriber request type", nameof(subscriberRequest));
+            var settings = providerSettings.PushNotificationSettings;
 
-            var options = new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", providerSettings.ApiDomain))
+            using var client = new RestClient(new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", settings.ApiDomain))
             {
                 Timeout = TimeSpan.FromSeconds(30),
-            };
-            using var client = new RestClient(options);
-            var request = new RestRequest("/subscription", Method.Post);
-            request.AddHeader("content-type", "application/json");
-            request.AddHeader("DHL-API-Key", dhlSubscriberRequest.DhlApiKey);
+            });
 
-            var subscriptionRequest = new DHLWebhookSubscriptionRequest
+            var failures = new List<string>();
+            foreach (var subscription in settings.Subscriptions)
             {
-                Format = dhlSubscriberRequest.Format,
-                Service = dhlSubscriberRequest.Service,
-                Hook = new DHLWebhookHook
+                var request = new RestRequest("/subscription", Method.Post);
+                request.AddHeader("DHL-API-Key", settings.APIKey);
+                request.AddJsonBody(new DHLWebhookSubscriptionRequest
                 {
-                    Uri = dhlSubscriberRequest.HookUri,
-                    Authentication = new DHLWebhookAuthentication
+                    Format = settings.Format,
+                    Service = subscription.Service,
+                    Hook = new DHLWebhookHook
                     {
-                        Type = "ApiKeyAuthentication",
-                        Header = dhlSubscriberRequest.AuthenticationHeader,
-                        Token = dhlSubscriberRequest.AuthenticationToken
+                        Uri = hookUri,
+                        Authentication = new DHLWebhookAuthentication
+                        {
+                            Type = "ApiKeyAuthentication",
+                            Header = settings.AuthenticationHeader,
+                            Token = settings.AuthenticationToken
+                        },
+                        Headers = new List<DHLWebhookHeader>
+                        {
+                            new() { Name = settings.WebhookHeaderName, Value = settings.WebhookHeaderValue }
+                        }
                     },
-                    Headers = new List<DHLWebhookHeader>
-                    {
-                        new() { Name = dhlSubscriberRequest.WebhookHeaderName, Value = dhlSubscriberRequest.WebhookHeaderValue }
-                    }
-                },
-                Events = [..dhlSubscriberRequest.Events],
-                Type = "Account",
-                AccountID = dhlSubscriberRequest.AccountID
-            };
+                    Events = [.. subscription.Events],
+                    Type = "Account",
+                    AccountID = settings.AccountID
+                });
 
-            request.AddJsonBody(subscriptionRequest);
-            RestResponse response = await client.ExecuteAsync(request, ct);
+                var response = await client.ExecuteAsync(request, ct);
+                if (!response.IsSuccessful)
+                    failures.Add($"{subscription.Service}: {(int)response.StatusCode} {response.Content}");
+            }
 
-            if (response.IsSuccessful)
-            return new WebHookSubsribeAttemptResponse()
-            {
-                IsSuccess = true,
-                Message = response.Content,
-            };
-
-           
-            return new WebHookSubsribeAttemptResponse()
-            {
-                IsSuccess = false,
-                Message = response.Content,
-                Exception = response.ErrorException
-            };
-
+            if (failures.Count > 0)
+                throw new DHLException(ShippingErrorCode.UNKNOW, "DHL rejected push subscription(s): " + string.Join("; ", failures));
         }
-        public async Task<WebHookSubsribeAttemptResponse> ActivateSubscriber(DHLSubscriberActivatorRequest activator, CancellationToken ct = default)
+
+        public async Task ActivateSubscriber(DHLSubscriberActivatorRequest activator, CancellationToken ct = default)
         {
             var activatorOptions = new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", providerSettings.ApiDomain))
             {
@@ -491,29 +481,23 @@ namespace ShippingProAPICollection.Provider.DHL
             RestResponse activatorResponse = await activatorClient.ExecuteAsync(activatorRequest, ct);
 
             if (!activatorResponse.IsSuccessful)
-                return new WebHookSubsribeAttemptResponse()
-                {
-                    IsSuccess = false,
-                    Message = activatorResponse.Content,
-                    Exception = activatorResponse.ErrorException
-                };
-
-            return new WebHookSubsribeAttemptResponse()
-            {
-                IsSuccess = true,
-                Message = activatorResponse.Content,
-            };
+                throw new DHLException(ShippingErrorCode.UNKNOW, $"DHL rejected the subscriber activation: {(int)activatorResponse.StatusCode} {activatorResponse.Content}");
         }
-        public async Task ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+
+        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not DHLParcelStatusChangeNotification dhlParcelStatusChangeNotification ||
                 dhlParcelStatusChangeNotification.Shipments is null ||
                 dhlParcelStatusChangeNotification.Shipments.Count == 0 ||
                 dhlParcelStatusChangeNotification.Shipments.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || s.Status is null))
-                throw new ArgumentException("Invalid data");
+                return new ParcelTrackingEventResult()
+                {
+                    Status = NotificationResultStatus.Failed,
+                    Message = "Invalid DHL parcel status change notification payload",
+                };
 
             string apiValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification);
-
+            List<ParcelTrackingEvent> trackingEvents = new List<ParcelTrackingEvent>();
             // A single push can contain several shipments; publish one tracking event per shipment.
             foreach (var shipment in dhlParcelStatusChangeNotification.Shipments)
             {
@@ -524,13 +508,14 @@ namespace ShippingProAPICollection.Provider.DHL
                     ParcelNumber = shipment.Id,
                 };
 
-                await rabbitMqConnector.AddTaskToQueueAsync(new RabbitMq.TrackingEvent()
-                {
-                    Event = trackParcelResponse
-                }, cancelToken);
+                trackingEvents.Add(trackParcelResponse);
             }
-        }
 
-        
+            return new ParcelTrackingEventResult()
+            {
+                Status = NotificationResultStatus.Success,
+                TrackingEvent = [.. trackingEvents]
+            };
+        }
     }
 }

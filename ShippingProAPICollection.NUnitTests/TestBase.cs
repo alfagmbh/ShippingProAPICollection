@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Provider.DHL;
+using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
@@ -46,6 +47,16 @@ namespace ShippingProAPICollection.NUnitTests
                 Username = "276a45fkqM",
                 ApplicationID = configuration["GLS_API_ID"] ?? "",
                 ApplicationSecret = configuration["GLS_API_SECRET"] ?? "",
+                PushNotificationSettings = new GLSPushNotificationSettings
+                {
+                    ApiDomain = "https://shipit-wbm-test01.gls-group.eu:443",
+                    ContactID = "*********",
+                    IsActive = true,
+                    WebhookName = "GLSWebhook",
+                    WebhookPassword = "*******",
+                    WebhookUserId = "********",
+                    WebhookUsername = "*********"
+                }
             };
 
             providerSettings.AddSettings("GLS", glsSettings);
@@ -60,7 +71,20 @@ namespace ShippingProAPICollection.NUnitTests
                 NationalAccountNumber = "33333333330102",
                 LabelPrintFormat = "910-300-410",
                 APIKey = configuration["DHLAPIKey"] ?? "",
-                APILanguage = "de-DE"
+                APILanguage = "de-DE",
+                PushNotificationSettings = new DHLPushNotificationSettings
+                {
+                    ApiDomain = "sandbox",
+                    APIKey = configuration["DHLAPIKey"] ?? "",
+                    APILanguage = "de-DE",
+                    Format = "JSON",
+                    AuthenticationHeader = "Authorization",
+                    AuthenticationToken = "token",
+                    WebhookHeaderName = "X-Header",
+                    WebhookHeaderValue = "value",
+                    AccountID = "account",
+                    Subscriptions = [new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [DHLNotificationEventTypes.Transit, DHLNotificationEventTypes.Delivered] }]
+                }
             };
 
             providerSettings.AddSettings("DHL", dhlSettings);
@@ -71,7 +95,11 @@ namespace ShippingProAPICollection.NUnitTests
                 APILanguage = "de_DE",
                 DepotNumber = "0191",
                 Username = "sandboxdpd",
-                Password = "xMmshh1"
+                Password = "xMmshh1",
+                PushNotificationSettings = new DPDPushNotificationSettings
+                {
+                    IsActive = true,
+                }
             };
 
             providerSettings.AddSettings("DPD", dpdSettings);
@@ -99,5 +127,4 @@ namespace ShippingProAPICollection.NUnitTests
             _serviceProvider.Dispose();
         }
     }
-
 }

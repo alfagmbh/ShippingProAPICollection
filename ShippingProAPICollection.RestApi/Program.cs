@@ -2,7 +2,6 @@ using System.Reflection;
 using Microsoft.OpenApi.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using ShippingProAPICollection.RabbitMq;
 using ShippingProAPICollection.RestApi.Entities;
 using ShippingProAPICollection.RestApi.Extensions;
 
@@ -67,10 +66,7 @@ namespace ShippingProAPICollection.RestApi
               
                 builder.Configuration.AddJsonFile(secretsFilePath, optional: true, reloadOnChange: true);
 
-                builder.Services.AddOptions<RabbitMqSecrets>()
-                    .Bind(builder.Configuration.GetSection(RabbitMqSecrets.SectionName))
-                    .ValidateDataAnnotations()
-                    .ValidateOnStart();
+               
             }
            
 
@@ -80,7 +76,6 @@ namespace ShippingProAPICollection.RestApi
             builder.Services.AddSingleton(applicationSettingService.BuildCollectionSettings());
 
             builder.Services.AddScoped<ShippingProAPICollectionService>();
-            builder.Services.AddScoped<RabbitMqConnector>();
 
             var app = builder.Build();
 

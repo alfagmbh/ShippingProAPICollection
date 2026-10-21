@@ -17,5 +17,11 @@ namespace ShippingProAPICollection.Provider.DPD
         /// </summary>
         public required string APILanguage { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
+        public required DPDPushNotificationSettings PushNotificationSettings { get; set; }
+    }
+
+    public class DPDPushNotificationSettings : PushNotificationSettings
+    {
+      
     }
 }
