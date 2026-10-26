@@ -7,6 +7,7 @@ using ShippingProAPICollection.Provider.DHL;
 using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
+using ShippingProAPICollection.Provider.GLS.Entities;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
 
 namespace ShippingProAPICollection
@@ -110,24 +111,24 @@ namespace ShippingProAPICollection
             {
                 case ShippingProviderType.DHL:
                     var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-                    return Task.FromResult(serviceDHL.ProcessParcelStatusChangeNotification(
+                    return serviceDHL.ProcessParcelStatusChangeNotification(
                         notificationData is DHLParcelStatusChangeNotification dhlNotification
                         ? dhlNotification
-                        : throw new InvalidOperationException("Invalid notification type"), ct));
+                        : throw new InvalidOperationException("Invalid notification type"), ct);
 
                 case ShippingProviderType.DPD:
                     var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().First();
-                    return Task.FromResult(serviceDPD.ProcessParcelStatusChangeNotification(
+                    return serviceDPD.ProcessParcelStatusChangeNotification(
                         notificationData is IReadOnlyDictionary<string, string?> dpdValues
                         ? DPDParcelStatusChangeNotification.FromKeyValues(dpdValues)
-                        : throw new InvalidOperationException("Invalid notification type"), ct));
+                        : throw new InvalidOperationException("Invalid notification type"), ct);
 
                 case ShippingProviderType.GLS:
                     var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
                     var glsNotification = notificationData as GLSParcelStatusChangeNotification
                         ?? throw new InvalidOperationException("Invalid notification type");
                     glsNotification.AuthorizationHeader = authorizationHeader;
-                    return Task.FromResult(serviceGLS.ProcessParcelStatusChangeNotification(glsNotification, ct));
+                    return serviceGLS.ProcessParcelStatusChangeNotification(glsNotification, ct);
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
@@ -201,5 +202,7 @@ namespace ShippingProAPICollection
             if (service.Length > 0) return service;
             throw new InvalidOperationException("Service not found for the specified type.");
         }
+        
+        public Task<GLSParcelDetails[]> GetGLSParcelInfo(string parcelNumber) => GetServiceProviderFromType<GLSShipmentService>().First().GetParcelDetails(new[] { parcelNumber });
     }
 }

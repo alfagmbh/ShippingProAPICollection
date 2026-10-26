@@ -429,7 +429,7 @@ namespace ShippingProAPICollection.Provider.TRANSOFLEX
             throw new NotImplementedException();
         }
 
-        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken)
+        public Task<ParcelTrackingEventResult> ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken)
         {
             throw new TOFException(ShippingErrorCode.NOT_AVAILABLE, "Fehler beim Verarbeiten der ParcelStatusChangeNotification");
         }

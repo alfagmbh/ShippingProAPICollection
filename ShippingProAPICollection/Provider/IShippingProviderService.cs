@@ -1,6 +1,7 @@
 ﻿using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Provider.GLS;
+using ShippingProAPICollection.Provider.GLS.Entities;
 
 namespace ShippingProAPICollection.Provider
 {
@@ -65,6 +66,6 @@ namespace ShippingProAPICollection.Provider
         /// <param name="webhookData"></param>
         /// <param name="cancelToken"></param>
         /// <returns></returns>
-        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
+        public Task<ParcelTrackingEventResult> ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? notificationData, CancellationToken cancelToken);
     }
 }

@@ -196,14 +196,16 @@ namespace ShippingProAPICollection.Provider.GLS
 
         #region parcel tracking
 
-        private static readonly HttpClient _httpClient = new();
         private const string PushNotificationBaseUrl = "https://api.gls-group.net/push-notification-v1";
         private const string WebhookSubscriptionUrl = PushNotificationBaseUrl + "/management/subscription/shippers";
         private const string WebhookUserUrl = PushNotificationBaseUrl + "/management/user";
         private const string WebhookAuthUrl = PushNotificationBaseUrl + "/management/auth";
         private const string OAuthTokenUrl = "https://api.gls-group.net/oauth2/v2/token";
+        private const string TrackAndTraceBaseUrl = "https://api.gls-group.net/track-and-trace-v1";
+        private const string TrackAndTraceOAuthTokenUrl = "https://api.gls-group.net/oauth2/v1/token";
+        private const int TrackAndTraceMaxParcelNumbers = 10;
 
-        // The services are created per request, so the OAuth token is cached per application id across instances.
+        // The services are created per request, so the OAuth token is cached per token url and application id across instances.
         private static readonly ConcurrentDictionary<string, (string Token, DateTime ExpiresAt)> _pushTokenCache = new();
 
         public async Task<WebHookSubsribeAttemptResponse> SubscribeToWebhook(SubscriberRequest subscriberRequest, CancellationToken ct)
@@ -300,12 +302,13 @@ namespace ShippingProAPICollection.Provider.GLS
             }
         }
 
-        private async Task<string> GetPushAccessToken(CancellationToken ct)
+        private async Task<string> GetAccessToken(string tokenUrl, CancellationToken ct)
         {
-            if (_pushTokenCache.TryGetValue(providerSettings.ApplicationID, out var cached) && cached.ExpiresAt > DateTime.UtcNow)
+            var cacheKey = $"{tokenUrl}|{providerSettings.ApplicationID}";
+            if (_pushTokenCache.TryGetValue(cacheKey, out var cached) && cached.ExpiresAt > DateTime.UtcNow)
                 return cached.Token;
 
-            using var client = new RestClient(new RestClientOptions(OAuthTokenUrl)
+            using var client = new RestClient(new RestClientOptions(tokenUrl)
             {
                 Authenticator = new HttpBasicAuthenticator(providerSettings.ApplicationID, providerSettings.ApplicationSecret)
             });
@@ -321,13 +324,13 @@ namespace ShippingProAPICollection.Provider.GLS
             if (token == null)
                 throw new GLSException(ShippingErrorCode.UNKNOW, "GLS OAuth token request failed", null);
 
-            _pushTokenCache[providerSettings.ApplicationID] = (token.AccessToken, DateTime.UtcNow.AddSeconds(Math.Max(token.ExpiresIn - 60, 0)));
+            _pushTokenCache[cacheKey] = (token.AccessToken, DateTime.UtcNow.AddSeconds(Math.Max(token.ExpiresIn - 60, 0)));
             return token.AccessToken;
         }
 
         private async Task<WebHookSubsribeAttemptResponse> CallPushApi(string url, object body, CancellationToken ct)
         {
-            var accessToken = await GetPushAccessToken(ct);
+            var accessToken = await GetAccessToken(OAuthTokenUrl, ct);
 
             using var client = new RestClient(new RestClientOptions(url)
             {
@@ -347,7 +350,50 @@ namespace ShippingProAPICollection.Provider.GLS
             };
         }
 
-        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        /// <summary>
+        /// Gets the current status and event history for up to 10 GLS parcel numbers (GLS Track And Trace v1).
+        /// Parcels GLS cannot resolve are not thrown but returned with <see cref="GLSParcelDetails.ErrorCode"/> set.
+        /// </summary>
+        /// <param name="parcelNumbers">GLS parcel numbers (unit nos)</param>
+        /// <param name="language">Language of the event descriptions, e.g. EN or DE</param>
+        public async Task<GLSParcelDetails[]> GetParcelDetails(string[] parcelNumbers, CancellationToken ct = default)
+        {
+            const string language = "DE";
+            const string TrackAndTraceBaseUrl = "https://api.gls-group.net/track-and-trace-v1";
+            const string TrackAndTraceOAuthTokenUrl = "https://api.gls-group.net/oauth2/v1/token";
+            const int TrackAndTraceMaxParcelNumbers = 10;
+
+            if (parcelNumbers == null || parcelNumbers.Length == 0 || parcelNumbers.Any(string.IsNullOrWhiteSpace))
+                throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, "Mindestens eine GLS-Paketnummer wird benötigt und keine darf leer sein");
+
+            if (parcelNumbers.Length > TrackAndTraceMaxParcelNumbers)
+                throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, $"Es können maximal {TrackAndTraceMaxParcelNumbers} GLS-Paketnummern pro Anfrage abgefragt werden");
+
+            var accessToken = await GetAccessToken(TrackAndTraceOAuthTokenUrl, ct);
+            var unitNos = string.Join(",", parcelNumbers.Select(x => Uri.EscapeDataString(x.Trim())));
+
+            using var client = new RestClient(new RestClientOptions($"{TrackAndTraceBaseUrl}/tracking/simple/trackids/{unitNos}")
+            {
+                Authenticator = new JwtAuthenticator(accessToken)
+            });
+
+            var request = new RestRequest { Method = Method.Get };
+            request.AddHeader("Accept-Language", language);
+            request.AddQueryParameter("showEvents", "true");
+
+            var response = await client.ExecuteAsync(request, ct).ConfigureAwait(false);
+
+            HTTPReponseUtils.CheckHttpResponse<GLSException>("GLS-Paketverfolgung fehlgeschlagen", parcelNumbers, response);
+
+            var parcels = JsonConvert.DeserializeObject<GLSParcelsResponse>(response.Content ?? string.Empty)?.Parcels
+                ?? throw new GLSException(ShippingErrorCode.UNKNOW, "No Data available in response", new { payload = parcelNumbers, response = response.Content });
+
+            return [..parcels];
+        }
+
+        record GlsApiValue(string? Eventcode, string? Details = null);
+
+        public async Task<ParcelTrackingEventResult> ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             // GLS calls with the BASIC credentials registered during the push setup; nothing is processed without them.
             if (parcelStatusChangeNotification is not GLSParcelStatusChangeNotification glsParcelStatusChangeNotification ||
@@ -362,13 +408,21 @@ namespace ShippingProAPICollection.Provider.GLS
                     Message = "Invalid GLS parcel status change notification"
                 };
 
+            GlsApiValue? apiValue = providerSettings.PushNotificationSettings.WithDetails
+
+                ? new GlsApiValue(glsParcelStatusChangeNotification.EventCode,
+                                  JsonConvert.SerializeObject(
+                                      await GetParcelDetails(new[] { glsParcelStatusChangeNotification.ParcelId }, cancelToken)))
+
+                : new GlsApiValue(glsParcelStatusChangeNotification.EventCode);
+
             //transform the webhook data into a model
             ParcelTrackingEvent? trackParcelResponse = new()
             {
                 ParcelNumber = glsParcelStatusChangeNotification.ParcelId,
                 Status = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification.ParcelStatus).ToString(),
-                APIValue = glsParcelStatusChangeNotification.EventCode,
-                CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null
+                APIValue = JsonConvert.SerializeObject(apiValue),
+                CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null,
             };
 
             return new ParcelTrackingEventResult()

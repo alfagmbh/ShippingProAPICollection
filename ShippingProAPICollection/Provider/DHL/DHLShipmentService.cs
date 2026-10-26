@@ -484,17 +484,17 @@ namespace ShippingProAPICollection.Provider.DHL
                 throw new DHLException(ShippingErrorCode.UNKNOW, $"DHL rejected the subscriber activation: {(int)activatorResponse.StatusCode} {activatorResponse.Content}");
         }
 
-        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public Task<ParcelTrackingEventResult> ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not DHLParcelStatusChangeNotification dhlParcelStatusChangeNotification ||
                 dhlParcelStatusChangeNotification.Shipments is null ||
                 dhlParcelStatusChangeNotification.Shipments.Count == 0 ||
                 dhlParcelStatusChangeNotification.Shipments.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || s.Status is null))
-                return new ParcelTrackingEventResult()
+                return Task.FromResult(new ParcelTrackingEventResult()
                 {
                     Status = NotificationResultStatus.Failed,
                     Message = "Invalid DHL parcel status change notification payload",
-                };
+                });
 
             string apiValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification);
             List<ParcelTrackingEvent> trackingEvents = new List<ParcelTrackingEvent>();
@@ -511,11 +511,11 @@ namespace ShippingProAPICollection.Provider.DHL
                 trackingEvents.Add(trackParcelResponse);
             }
 
-            return new ParcelTrackingEventResult()
+            return Task.FromResult(new ParcelTrackingEventResult()
             {
                 Status = NotificationResultStatus.Success,
                 TrackingEvent = [.. trackingEvents]
-            };
+            });
         }
     }
 }

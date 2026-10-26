@@ -32,7 +32,7 @@ namespace ShippingProAPICollection.Provider.GLS
         public required string WebhookUserId { get; set; }
         public required string WebhookUsername { get; set; }
         public required string WebhookPassword { get; set; }
-
+        public bool WithDetails { get; set; } = false;
         /// <summary>
         /// Checks the Basic Authorization header of an incoming push notification against the webhook credentials.
         /// Fails closed when no credentials are configured.

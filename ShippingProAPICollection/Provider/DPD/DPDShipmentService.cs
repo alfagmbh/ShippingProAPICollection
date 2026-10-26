@@ -125,16 +125,16 @@ namespace ShippingProAPICollection.Provider.DPD
             return providerSettings.MaxPackageWeight;
         }
 
-        public ParcelTrackingEventResult ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
+        public Task<ParcelTrackingEventResult> ProcessParcelStatusChangeNotification(ParcelStatusChangeNotification? parcelStatusChangeNotification, CancellationToken cancelToken)
         {
             if (parcelStatusChangeNotification is not DPDParcelStatusChangeNotification dpdParcelStatusChangeNotification ||
                 dpdParcelStatusChangeNotification.ParcelNumber is null ||
                 dpdParcelStatusChangeNotification.Status is null)
-                return new ParcelTrackingEventResult()
+                return Task.FromResult(new ParcelTrackingEventResult()
                 {
                     Status = NotificationResultStatus.Failed,
                     Message = "Invalid DPD parcel status change notification",
-                };
+                });
 
             // Process the parcel status change notification here
             ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent
@@ -144,12 +144,12 @@ namespace ShippingProAPICollection.Provider.DPD
                 APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
             };
 
-            return new ParcelTrackingEventResult()
+            return Task.FromResult(new ParcelTrackingEventResult()
             {
                 Status = NotificationResultStatus.Success,
                 Message = DpdAcknowledge(dpdParcelStatusChangeNotification.PushId!),
                 TrackingEvent = [trackParcelResponse]
-            };
+            });
 
             static string DpdAcknowledge(string pushId) => JsonConvert.SerializeObject(new ContentResult()
             {
