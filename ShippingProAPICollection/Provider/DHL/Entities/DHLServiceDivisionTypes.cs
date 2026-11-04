@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using System.ComponentModel;
 using System.Runtime.Serialization;
 
 namespace ShippingProAPICollection.Provider.DHL.Entities
@@ -8,6 +9,7 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
     /// DHL service divisions (the "service" value of a push subscription).
     /// </summary>
     [JsonConverter(typeof(StringEnumConverter))]
+    [TypeConverter(typeof(DHLEnumTypeConverter<DHLServiceDivisionTypes>))]
     public enum DHLServiceDivisionTypes
     {
         [EnumMember(Value = "parcel-de")]

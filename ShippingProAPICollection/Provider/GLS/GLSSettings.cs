@@ -1,4 +1,5 @@
-﻿using ShippingProAPICollection.Models.Entities;
+﻿using Newtonsoft.Json;
+using ShippingProAPICollection.Models.Entities;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -17,11 +18,13 @@ namespace ShippingProAPICollection.Provider.GLS
         public required string ApplicationSecret { get; set; }
         public required string ContactID { get; set; }
         public string? CustomerID { get; set; }
-        public string? PortalUsername { get; set; }
-        public string? PortalPassword { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
 
-        public required GLSPushNotificationSettings PushNotificationSettings { get; set; }
+        /// <summary>
+        /// Filled from the secrets file, never persisted with the provider settings.
+        /// </summary>
+        [JsonIgnore]
+        public GLSPushNotificationSettings? PushNotificationSettings { get; set; }
     }
 
     public class GLSPushNotificationSettings : PushNotificationSettings
@@ -32,6 +35,8 @@ namespace ShippingProAPICollection.Provider.GLS
         public required string WebhookUserId { get; set; }
         public required string WebhookUsername { get; set; }
         public required string WebhookPassword { get; set; }
+        public required string PortalUsername { get; set; }
+        public required string PortalPassword { get; set; }
         public bool WithDetails { get; set; } = false;
         /// <summary>
         /// Checks the Basic Authorization header of an incoming push notification against the webhook credentials.

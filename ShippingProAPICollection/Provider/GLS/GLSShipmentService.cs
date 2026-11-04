@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
@@ -14,7 +15,6 @@ using ShippingProAPICollection.Provider.GLS.Entities.Create.Response;
 using ShippingProAPICollection.Provider.GLS.Entities.Create.Services;
 using ShippingProAPICollection.Provider.GLS.Entities.EstimatedDeliveryDays;
 using ShippingProAPICollection.Provider.GLS.Entities.Validation;
-using System.Collections.Concurrent;
 
 namespace ShippingProAPICollection.Provider.GLS
 {
@@ -201,9 +201,6 @@ namespace ShippingProAPICollection.Provider.GLS
         private const string WebhookUserUrl = PushNotificationBaseUrl + "/management/user";
         private const string WebhookAuthUrl = PushNotificationBaseUrl + "/management/auth";
         private const string OAuthTokenUrl = "https://api.gls-group.net/oauth2/v2/token";
-        private const string TrackAndTraceBaseUrl = "https://api.gls-group.net/track-and-trace-v1";
-        private const string TrackAndTraceOAuthTokenUrl = "https://api.gls-group.net/oauth2/v1/token";
-        private const int TrackAndTraceMaxParcelNumbers = 10;
 
         // The services are created per request, so the OAuth token is cached per token url and application id across instances.
         private static readonly ConcurrentDictionary<string, (string Token, DateTime ExpiresAt)> _pushTokenCache = new();
@@ -227,7 +224,8 @@ namespace ShippingProAPICollection.Provider.GLS
         /// </summary>
         public async Task<WebHookSubsribeAttemptResponse> ConfigureWebhookAuth(GLSWebhookAuthRequest request, CancellationToken ct)
         {
-            var pushNotificationSettings = providerSettings.PushNotificationSettings;
+            var pushNotificationSettings = providerSettings.PushNotificationSettings
+                ?? throw new InvalidOperationException($"Push notification settings for contract {providerSettings.ContractID} are missing in the secrets file.");
             if (string.IsNullOrEmpty(pushNotificationSettings.WebhookUsername) || string.IsNullOrEmpty(pushNotificationSettings.WebhookPassword))
                 throw new InvalidOperationException("WebhookUsername and WebhookPassword must be configured for GLS push notifications.");
 
@@ -246,13 +244,15 @@ namespace ShippingProAPICollection.Provider.GLS
 
         /// <summary>
         /// Runs the whole GLS push setup from the provider settings: webhook user + auth (only while no webhook user id is configured), then the subscription.
-        /// Throws when GLS rejects one of the steps.
+        /// A rejected step is reported in <see cref="PushSubscriptionInfo.Error"/>; the webhook user id is returned in
+        /// <see cref="PushSubscriptionInfo.ValuesToSave"/> as soon as it is known, so it can be stored in the secrets file.
         /// </summary>
-        public async Task InitializePushNotification(string hookUri, CancellationToken ct)
+        public async Task<PushSubscriptionInfo> SubscribeToPushNotification(string hookUri, CancellationToken ct)
         {
-            var pushNotificationSettings = providerSettings.PushNotificationSettings;
-            if (string.IsNullOrEmpty(providerSettings.CustomerID) || string.IsNullOrEmpty(providerSettings.PortalUsername) || string.IsNullOrEmpty(providerSettings.PortalPassword))
-                throw new InvalidOperationException("CustomerID, PortalUsername and PortalPassword must be configured for GLS.");
+            var pushNotificationSettings = providerSettings.PushNotificationSettings
+                ?? throw new InvalidOperationException($"Push notification settings for contract {providerSettings.ContractID} are missing in the secrets file.");
+            if (string.IsNullOrEmpty(providerSettings.CustomerID))
+                throw new InvalidOperationException("CustomerID must be configured for GLS.");
 
             var webhookUserId = pushNotificationSettings.WebhookUserId;
 
@@ -268,21 +268,40 @@ namespace ShippingProAPICollection.Provider.GLS
                     ?? throw new GLSException(ShippingErrorCode.UNKNOW, "GLS webhook user response did not contain an id.");
 
                 var authResponse = await ConfigureWebhookAuth(new GLSWebhookAuthRequest { WebhookUserId = webhookUserId, WebhookUrl = hookUri }, ct);
-                EnsureSuccess(authResponse, "webhook auth");
+                if (!authResponse.IsSuccess)
+                    return BuildPushInitResult(webhookUserId, "webhook auth", authResponse);
             }
 
             var subscribeResponse = await SubscribeToWebhook(new GLSWebhookSubscriberRequest
             {
                 WebhookUserId = webhookUserId,
                 CustomerId = providerSettings.CustomerID,
-                ContactId = providerSettings.ContactID,
-                PortalUsername = providerSettings.PortalUsername,
-                PortalPassword = providerSettings.PortalPassword,
+                ContactId = pushNotificationSettings.ContactID,
+                PortalUsername = pushNotificationSettings.PortalUsername,
+                PortalPassword = pushNotificationSettings.PortalPassword,   
                 HookUri = hookUri
             }, ct);
-
-            EnsureSuccess(subscribeResponse, "subscription");
+            
+            return BuildPushInitResult(webhookUserId, subscribeResponse.IsSuccess ? null : "subscription", subscribeResponse);
         }
+
+        /// <summary>
+        /// Interface entry point; the answer is dropped, use <see cref="SubscribeToPushNotification"/> to get it.
+        /// </summary>
+        public Task InitializePushNotification(string hookUri, CancellationToken ct) =>
+            SubscribeToPushNotification(hookUri, ct);
+
+        /// <summary>
+        /// Builds the init answer: the webhook user id to store in the secrets file and, if a step was rejected, which one.
+        /// The error never carries the GLS response, it may contain credentials.
+        /// </summary>
+        public static PushSubscriptionInfo BuildPushInitResult(string webhookUserId, string? rejectedStep, WebHookSubsribeAttemptResponse response) => new()
+        {
+            Service = "GLS",
+            ValuesToSave = new Dictionary<string, string> { ["WebhookUserId"] = webhookUserId },
+            Error = rejectedStep is null ? null : $"GLS rejected the {rejectedStep} request.",
+            ApiResponse = JsonConvert.SerializeObject(response, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore, ContractResolver = new CamelCasePropertyNamesContractResolver() })
+        };
 
         private static void EnsureSuccess(WebHookSubsribeAttemptResponse response, string step)
         {
@@ -358,9 +377,11 @@ namespace ShippingProAPICollection.Provider.GLS
         /// <param name="language">Language of the event descriptions, e.g. EN or DE</param>
         public async Task<GLSParcelDetails[]> GetParcelDetails(string[] parcelNumbers, CancellationToken ct = default)
         {
+            var pushNotificationSettings = providerSettings.PushNotificationSettings
+                ?? throw new InvalidOperationException($"Push notification settings for contract {providerSettings.ContractID} are missing in the secrets file.");
             const string language = "DE";
-            const string TrackAndTraceBaseUrl = "https://api.gls-group.net/track-and-trace-v1";
-            const string TrackAndTraceOAuthTokenUrl = "https://api.gls-group.net/oauth2/v1/token";
+            const string TrackAndTraceBaseUrl = "/track-and-trace-v1";
+            const string TrackAndTraceOAuthTokenUrl = "/oauth2/v1/token";
             const int TrackAndTraceMaxParcelNumbers = 10;
 
             if (parcelNumbers == null || parcelNumbers.Length == 0 || parcelNumbers.Any(string.IsNullOrWhiteSpace))
@@ -369,10 +390,11 @@ namespace ShippingProAPICollection.Provider.GLS
             if (parcelNumbers.Length > TrackAndTraceMaxParcelNumbers)
                 throw new GLSException(ShippingErrorCode.BAD_REQUEST_ERROR, $"Es können maximal {TrackAndTraceMaxParcelNumbers} GLS-Paketnummern pro Anfrage abgefragt werden");
 
-            var accessToken = await GetAccessToken(TrackAndTraceOAuthTokenUrl, ct);
+            var accessToken = await GetAccessToken(string.Concat(pushNotificationSettings.ApiDomain, TrackAndTraceOAuthTokenUrl), ct);
             var unitNos = string.Join(",", parcelNumbers.Select(x => Uri.EscapeDataString(x.Trim())));
 
-            using var client = new RestClient(new RestClientOptions($"{TrackAndTraceBaseUrl}/tracking/simple/trackids/{unitNos}")
+            using var client = new RestClient(new RestClientOptions(
+                string.Concat(pushNotificationSettings.ApiDomain, TrackAndTraceBaseUrl, "/tracking/simple/trackids/", unitNos))
             {
                 Authenticator = new JwtAuthenticator(accessToken)
             });
@@ -388,7 +410,7 @@ namespace ShippingProAPICollection.Provider.GLS
             var parcels = JsonConvert.DeserializeObject<GLSParcelsResponse>(response.Content ?? string.Empty)?.Parcels
                 ?? throw new GLSException(ShippingErrorCode.UNKNOW, "No Data available in response", new { payload = parcelNumbers, response = response.Content });
 
-            return [..parcels];
+            return [.. parcels];
         }
 
         record GlsApiValue(string? Eventcode, string? Details = null);
@@ -397,7 +419,7 @@ namespace ShippingProAPICollection.Provider.GLS
         {
             // GLS calls with the BASIC credentials registered during the push setup; nothing is processed without them.
             if (parcelStatusChangeNotification is not GLSParcelStatusChangeNotification glsParcelStatusChangeNotification ||
-                !providerSettings.PushNotificationSettings.IsValidAuthorizationHeader(glsParcelStatusChangeNotification.AuthorizationHeader))
+                providerSettings.PushNotificationSettings?.IsValidAuthorizationHeader(glsParcelStatusChangeNotification.AuthorizationHeader) != true)
                 throw new UnauthorizedAccessException("Invalid GLS push notification credentials.");
 
             if (glsParcelStatusChangeNotification.ParcelId is null ||
@@ -408,7 +430,7 @@ namespace ShippingProAPICollection.Provider.GLS
                     Message = "Invalid GLS parcel status change notification"
                 };
 
-            GlsApiValue? apiValue = providerSettings.PushNotificationSettings.WithDetails
+            GlsApiValue? apiValue = providerSettings.PushNotificationSettings?.WithDetails == true
 
                 ? new GlsApiValue(glsParcelStatusChangeNotification.EventCode,
                                   JsonConvert.SerializeObject(

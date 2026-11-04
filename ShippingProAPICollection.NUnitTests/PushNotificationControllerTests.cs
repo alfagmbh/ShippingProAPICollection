@@ -38,7 +38,14 @@ namespace ShippingProAPICollection.NUnitTests
         private static string BasicHeader(string user, string password) =>
             "Basic " + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{user}:{password}"));
 
-        private PushNotificationController CreateController(bool withDpdProvider = false, bool withGlsProvider = false, string? authorization = null, bool withDhlProvider = false)
+        private const string DhlPushToken = "token";
+
+        private static readonly Dictionary<string, string> ValidDhlHeaders = new()
+        {
+            ["Authorization"] = DhlPushToken
+        };
+
+        private PushNotificationController CreateController(bool withDpdProvider = false, bool withGlsProvider = false, string? authorization = null, bool withDhlProvider = false, IDictionary<string, string>? headers = null)
         {
             var settings = new ShippingProAPICollectionSettings(new ShippingProAPIShipFromAddress
             {
@@ -88,12 +95,10 @@ namespace ShippingProAPICollection.NUnitTests
                         ApiDomain = "sandbox",
                         APIKey = "key",
                         APILanguage = "de-DE",
-                        Format = "JSON",
+                        Format = "Default",
                         AuthenticationHeader = "Authorization",
-                        AuthenticationToken = "token",
-                        WebhookHeaderName = "X-Header",
-                        WebhookHeaderValue = "value",
-                        AccountID = "account",
+                        AuthenticationToken = DhlPushToken,
+                        HookUri = "https://example.com/hook",
                         Subscriptions = []
                     }
                 });
@@ -128,6 +133,8 @@ namespace ShippingProAPICollection.NUnitTests
             var httpContext = new DefaultHttpContext();
             if (authorization != null)
                 httpContext.Request.Headers.Authorization = authorization;
+            foreach (var header in headers ?? new Dictionary<string, string>())
+                httpContext.Request.Headers[header.Key] = header.Value;
 
             return new PushNotificationController(service, NullLogger<PushNotificationController>.Instance)
             {
@@ -170,6 +177,23 @@ namespace ShippingProAPICollection.NUnitTests
             Assert.That(body.ProviderException.Message, Is.EqualTo(expectedMessage));
             Assert.That(body.ProviderException.Payload, Is.Null);
         }
+
+        private static ParcelTrackingEventResult AssertOkWithResult(IActionResult result)
+        {
+            Assert.That(result, Is.InstanceOf<OkObjectResult>());
+            return (ParcelTrackingEventResult)((OkObjectResult)result).Value!;
+        }
+
+        private static void AssertNonAuthoritativeFailed(IActionResult result)
+        {
+            Assert.That(result, Is.InstanceOf<ObjectResult>());
+            Assert.That(((ObjectResult)result).StatusCode, Is.EqualTo(StatusCodes.Status203NonAuthoritative));
+            var body = (ParcelTrackingEventResult)((ObjectResult)result).Value!;
+            Assert.That(body.Status, Is.EqualTo(NotificationResultStatus.Failed));
+        }
+
+        private static DHLParcelStatusChangeNotification DhlNotification(string json) =>
+            Newtonsoft.Json.JsonConvert.DeserializeObject<DHLParcelStatusChangeNotification>(json)!;
 
         private static void AssertUnprocessable(IActionResult result)
         {
@@ -231,7 +255,9 @@ namespace ShippingProAPICollection.NUnitTests
             var result = await CreateController(withGlsProvider: true, authorization: BasicHeader(GlsPushUser, GlsPushPassword))
                 .ProcessPushNotification(ShippingProviderType.GLS, notification, CancellationToken.None);
 
-            Assert.That(result, Is.InstanceOf<OkResult>());
+            var body = AssertOkWithResult(result);
+            Assert.That(body.Status, Is.EqualTo(NotificationResultStatus.Success));
+            Assert.That(body.TrackingEvent!.Single().ParcelNumber, Is.EqualTo("1"));
         }
 
         [Test]
@@ -255,9 +281,90 @@ namespace ShippingProAPICollection.NUnitTests
                 Shipments = [new DHLPushShipment { Id = "1234567890", Status = new DHLPushStatus { StatusCode = "delivered" } }]
             };
 
+            var result = await CreateController(withDhlProvider: true, headers: ValidDhlHeaders).ProcessPushNotification(ShippingProviderType.DHL, notification, CancellationToken.None);
+
+            var body = AssertOkWithResult(result);
+            Assert.That(body.Status, Is.EqualTo(NotificationResultStatus.Success));
+            Assert.That(body.TrackingEvent!.Single().ParcelNumber, Is.EqualTo("1234567890"));
+            Assert.That(body.Subscription, Is.Null);
+        }
+
+        [Test]
+        public async Task DHLPush_WithValidateScopeWithoutSecret_IsAcknowledgedWithoutActivation()
+        {
+            // With a secret the push handler calls DHL to activate the subscription (a real HTTP call, not covered here).
+            var notification = DhlNotification(
+                "{\"scope\":\"subscription.validate\",\"self\":\"https://api-test.dhl.com/tracking/push/v1/subscription/016bb50b-7f1c-4aa4-8486-7f2f2e213a7c\"," +
+                "\"expires\":\"2026-08-24T08:12:00Z\",\"note\":\"Subscription validation token provided\"}");
+
+            var result = await CreateController(withDhlProvider: true, headers: ValidDhlHeaders).ProcessPushNotification(ShippingProviderType.DHL, notification, CancellationToken.None);
+
+            var body = AssertOkWithResult(result);
+            Assert.Multiple(() =>
+            {
+                Assert.That(body.TrackingEvent, Is.Null);
+                Assert.That(body.Subscription!.Scope, Is.EqualTo("subscription.validate"));
+                Assert.That(body.Subscription.SubscriptionId, Is.EqualTo("016bb50b-7f1c-4aa4-8486-7f2f2e213a7c"));
+                Assert.That(body.Subscription.Secret, Is.Null);
+                Assert.That(body.Subscription.Expires, Is.EqualTo("2026-08-24T08:12:00Z"));
+            });
+        }
+
+        [Test]
+        public async Task DHLPush_WithReadyScope_IsAcknowledgedWithoutSecret()
+        {
+            var notification = DhlNotification("{\"scope\":\"subscription.ready\",\"self\":\"https://api-test.dhl.com/tracking/push/v1/subscription/1\"}");
+
+            var result = await CreateController(withDhlProvider: true, headers: ValidDhlHeaders).ProcessPushNotification(ShippingProviderType.DHL, notification, CancellationToken.None);
+
+            var body = AssertOkWithResult(result);
+            Assert.That(body.Subscription!.SubscriptionId, Is.EqualTo("1"));
+            Assert.That(body.Subscription.Secret, Is.Null);
+        }
+
+        [Test]
+        public async Task DHLPush_WithInvalidShipments_Returns203WithFailedResult()
+        {
+            var result = await CreateController(withDhlProvider: true, headers: ValidDhlHeaders)
+                .ProcessPushNotification(ShippingProviderType.DHL, new DHLParcelStatusChangeNotification { Shipments = [] }, CancellationToken.None);
+
+            AssertNonAuthoritativeFailed(result);
+        }
+
+        [Test]
+        public async Task DHLPush_WithoutCredentials_ReturnsUnauthorized()
+        {
+            var notification = new DHLParcelStatusChangeNotification
+            {
+                Shipments = [new DHLPushShipment { Id = "1234567890", Status = new DHLPushStatus { StatusCode = "delivered" } }]
+            };
+
             var result = await CreateController(withDhlProvider: true).ProcessPushNotification(ShippingProviderType.DHL, notification, CancellationToken.None);
 
-            Assert.That(result, Is.InstanceOf<OkResult>());
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
+        }
+
+        [TestCase("Authorization", "wrong")]
+        [TestCase("X-Other", DhlPushToken)]
+        public async Task DHLPush_WithWrongOrMissingHeader_ReturnsUnauthorized(string name, string value)
+        {
+            var headers = new Dictionary<string, string> { [name] = value };
+
+            var result = await CreateController(withDhlProvider: true, headers: headers)
+                .ProcessPushNotification(ShippingProviderType.DHL, new DHLParcelStatusChangeNotification { Shipments = [] }, CancellationToken.None);
+
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
+        }
+
+        [Test]
+        public async Task DHLPush_HeadersInPayload_AreIgnored()
+        {
+            var payload = DhlNotification("{\"RequestHeaders\":{\"Authorization\":\"token\"},\"shipments\":[]}");
+
+            var result = await CreateController(withDhlProvider: true)
+                .ProcessPushNotification(ShippingProviderType.DHL, payload, CancellationToken.None);
+
+            Assert.That(result, Is.InstanceOf<UnauthorizedResult>());
         }
 
         [Test]
@@ -276,7 +383,9 @@ namespace ShippingProAPICollection.NUnitTests
             var result = await CreateController(withDpdProvider: true)
                 .ProcessPushNotification(ShippingProviderType.DPD, ValidDpdValues(), CancellationToken.None);
 
-            Assert.That(result, Is.InstanceOf<OkResult>());
+            var body = AssertOkWithResult(result);
+            Assert.That(body.Status, Is.EqualTo(NotificationResultStatus.Success));
+            Assert.That(body.TrackingEvent!.Single().ParcelNumber, Is.EqualTo("01905123456789"));
         }
 
         [Test]
@@ -299,16 +408,16 @@ namespace ShippingProAPICollection.NUnitTests
 
         [TestCase("pnr")]
         [TestCase("status")]
-        public async Task DPDPush_WithMissingKeys_IsStillAccepted(string missingKey)
+        public async Task DPDPush_WithMissingKeys_Returns203WithFailedResult(string missingKey)
         {
-            // An incomplete payload is only a failed result, not an exception (4xx only on exceptions).
+            // An incomplete payload is only a failed result, not an exception (4xx only on exceptions): 203 with the result.
             var values = ValidDpdValues();
             values.Remove(missingKey);
 
             var result = await CreateController(withDpdProvider: true)
                 .ProcessPushNotification(ShippingProviderType.DPD, values, CancellationToken.None);
 
-            Assert.That(result, Is.InstanceOf<OkResult>());
+            AssertNonAuthoritativeFailed(result);
         }
 
         [Test]
@@ -337,7 +446,6 @@ namespace ShippingProAPICollection.NUnitTests
             AssertUnprocessable(result);
         }
 
-        [TestCase(ShippingProviderType.DHL)]
         [TestCase(ShippingProviderType.GLS)]
         [TestCase(ShippingProviderType.TRANSOFLEX)]
         [TestCase(ShippingProviderType.CUSTOM)]
@@ -353,7 +461,8 @@ namespace ShippingProAPICollection.NUnitTests
         {
             var result = await CreateController().Ini(ShippingProviderType.DPD, new PushInitRequest("https://example.com/hook"), CancellationToken.None);
 
-            Assert.That(result, Is.InstanceOf<OkResult>());
+            Assert.That(result, Is.InstanceOf<OkObjectResult>());
+            Assert.That(((OkObjectResult)result).Value, Is.Empty);
         }
 
         [Test]
@@ -384,19 +493,158 @@ namespace ShippingProAPICollection.NUnitTests
         }
 
         [Test]
-        public void DHLSubscriptionRequest_Serialization_UsesDhlWireValues()
+        public void DHLSubscriptionRequest_Body_UsesSpecWireValues()
         {
-            var json = Newtonsoft.Json.Linq.JObject.Parse(Newtonsoft.Json.JsonConvert.SerializeObject(new DHLWebhookSubscriptionRequest
+            var settings = new DHLPushNotificationSettings
+            {
+                ApiDomain = "sandbox",
+                APIKey = "key",
+                APILanguage = "de-DE",
+                Format = "Default",
+                AuthenticationHeader = "ApiKey",
+                AuthenticationToken = "token",
+                HookUri = "https://example.com/hook",
+                Subscriptions = []
+            };
+            var subscription = new DHLPushSubscription
             {
                 Service = DHLServiceDivisionTypes.ParcelDe,
                 Events = [DHLNotificationEventTypes.PreTransit, DHLNotificationEventTypes.Delivered]
-            }));
+            };
+
+            var json = Newtonsoft.Json.Linq.JObject.Parse(DHLShipmentService.BuildSubscriptionRequestJson(settings, subscription, ["1234567890", "0987654321"]));
 
             Assert.Multiple(() =>
             {
+                Assert.That(json["type"]?.ToString(), Is.EqualTo("Shipment"));
+                Assert.That(json["shipmentIDs"]!.Select(e => e.ToString()), Is.EqualTo(new[] { "1234567890", "0987654321" }));
+                Assert.That(json["accountID"], Is.Null);
+                Assert.That(json["format"]?.ToString(), Is.EqualTo("Default"));
                 Assert.That(json["service"]?.ToString(), Is.EqualTo("parcel-de"));
-                Assert.That(json["events"]!.Select(e => e.ToString()), Is.EqualTo(new[] { "Pre-Transit", "Delivered" }));
+                Assert.That(json["events"]!.Select(e => e.ToString()), Is.EqualTo(new[] { "pre-transit", "delivered" }));
+                Assert.That(json["hook"]!["uri"]?.ToString(), Is.EqualTo("https://example.com/hook"));
+                Assert.That(json["hook"]!["authentication"]!["type"]?.ToString(), Is.EqualTo("ApiKeyAuthentication"));
+                Assert.That(json["hook"]!["authentication"]!["header"]?.ToString(), Is.EqualTo("ApiKey"));
+                Assert.That(json["hook"]!["authentication"]!["token"]?.ToString(), Is.EqualTo("token"));
+                Assert.That(json["hook"]!["headers"], Is.Null);
             });
+        }
+
+        [Test]
+        public async Task Ini_ForDhl_ReturnsEmptyOk()
+        {
+            // DHL parcels are subscribed when their label is created, there is nothing to set up here.
+            var result = await CreateController().Ini(ShippingProviderType.DHL, new PushInitRequest("https://example.com/hook"), CancellationToken.None);
+
+            Assert.That(result, Is.InstanceOf<OkObjectResult>());
+            Assert.That(((OkObjectResult)result).Value, Is.Empty);
+        }
+
+        [Test]
+        public void DHLPushSubscription_IsActiveByDefault_AndHonorsExplicitFalse()
+        {
+            Assert.That(new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [] }.IsActive, Is.True);
+            Assert.That(new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [], IsActive = false }.IsActive, Is.False);
+
+            // A config that never sets IsActive keeps subscribing.
+            var fromConfig = Newtonsoft.Json.JsonConvert.DeserializeObject<DHLPushSubscription>("{\"Service\":\"parcel-de\",\"Events\":[\"transit\"]}")!;
+            Assert.That(fromConfig.IsActive, Is.True);
+        }
+
+        [Test]
+        public void DHLSubscribeShipments_WithOnlyInactiveSubscriptions_Throws()
+        {
+            var settings = new DHLSettings
+            {
+                ApiDomain = "sandbox",
+                NationalAccountNumber = "1",
+                InternationalAccountNumber = "2",
+                Username = "user",
+                Password = "password",
+                LabelPrintFormat = "910-300-410",
+                DHLShipmentProfile = "STANDARD_GRUPPENPROFIL",
+                APIKey = "key",
+                APILanguage = "de-DE",
+                PushNotificationSettings = new DHLPushNotificationSettings
+                {
+                    ApiDomain = "sandbox",
+                    APIKey = "key",
+                    APILanguage = "de-DE",
+                    Format = "Default",
+                    AuthenticationHeader = "Authorization",
+                    AuthenticationToken = DhlPushToken,
+                    HookUri = "https://example.com/hook",
+                    Subscriptions = [new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [DHLNotificationEventTypes.Transit], IsActive = false }]
+                }
+            };
+            var service = new DHLShipmentService(new ShippingProAPIShipFromAddress { Name = "n", Street = "s", ContactName = "c", CountryIsoA2Code = "DE", City = "c", Email = "e@e.de", PostCode = "1", Phone = "1" }, settings);
+
+            Assert.ThrowsAsync<InvalidOperationException>(() => service.SubscribeShipments(["1234567890"]));
+        }
+
+        [Test]
+        public void DHLSubscriptionResponse_OnCreated_ReturnsIdAndExpiry()
+        {
+            // Example subscriptionCreate of the UTAPI spec.
+            var info = DHLShipmentService.ParseSubscriptionResponse(DHLServiceDivisionTypes.ParcelDe, 201, true,
+                "{\"self\":\"https://api-test.dhl.com/tracking/push/v1/subscription/016bb50b-7f1c-4aa4-8486-7f2f2e213a7c\"," +
+                "\"scope\":\"subscription.create\",\"expires\":\"2026-08-24T08:12:00Z\",\"note\":\"Subscription request created\"}");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(info.Service, Is.EqualTo("ParcelDe"));
+                Assert.That(info.SubscriptionId, Is.EqualTo("016bb50b-7f1c-4aa4-8486-7f2f2e213a7c"));
+                Assert.That(info.Scope, Is.EqualTo("subscription.create"));
+                Assert.That(info.Expires, Is.EqualTo("2026-08-24T08:12:00Z"));
+                Assert.That(info.Error, Is.Null);
+            });
+        }
+
+        [TestCase(400, "{\"detail\":\"Invalid hook\",\"status\":400}", "HTTP 400: Invalid hook")]
+        [TestCase(401, "not json", "HTTP 401")]
+        [TestCase(500, null, "HTTP 500")]
+        public void DHLSubscriptionResponse_OnRejection_ReturnsOnlyStatusAndDetail(int status, string? content, string expectedError)
+        {
+            var info = DHLShipmentService.ParseSubscriptionResponse(DHLServiceDivisionTypes.ParcelDe, status, false, content);
+
+            Assert.That(info.Error, Is.EqualTo(expectedError));
+            Assert.That(info.SubscriptionId, Is.Null);
+        }
+
+        [Test]
+        public void SubscriptionsResult_AllAccepted_Returns200_AnyRejected_Returns207()
+        {
+            var method = typeof(PushNotificationController).GetMethod("SubscriptionsResult", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var controller = CreateController();
+            var ok = new PushSubscriptionInfo { SubscriptionId = "1" };
+            var rejected = new PushSubscriptionInfo { Error = "HTTP 400" };
+
+            var allAccepted = (IActionResult)method.Invoke(controller, new object[] { new List<PushSubscriptionInfo> { ok } })!;
+            var mixed = (IActionResult)method.Invoke(controller, new object[] { new List<PushSubscriptionInfo> { ok, rejected } })!;
+
+            Assert.That(allAccepted, Is.InstanceOf<OkObjectResult>());
+            Assert.That(mixed, Is.InstanceOf<ObjectResult>());
+            Assert.That(((ObjectResult)mixed).StatusCode, Is.EqualTo(StatusCodes.Status207MultiStatus));
+            Assert.That(((ObjectResult)mixed).Value, Has.Count.EqualTo(2));
+        }
+
+        [Test]
+        public void GLSPushInitResult_OnSuccess_ReturnsWebhookUserIdToSave()
+        {
+            var info = GLSShipmentService.BuildPushInitResult("user-id", null);
+
+            Assert.That(info.Service, Is.EqualTo("GLS"));
+            Assert.That(info.Error, Is.Null);
+            Assert.That(info.ValuesToSave, Is.EqualTo(new Dictionary<string, string> { ["WebhookUserId"] = "user-id" }));
+        }
+
+        [Test]
+        public void GLSPushInitResult_OnRejectedStep_KeepsWebhookUserIdAndHidesResponse()
+        {
+            var info = GLSShipmentService.BuildPushInitResult("user-id", "subscription");
+
+            Assert.That(info.Error, Is.EqualTo("GLS rejected the subscription request."));
+            Assert.That(info.ValuesToSave!["WebhookUserId"], Is.EqualTo("user-id"));
         }
 
         [Test]

@@ -1,16 +1,22 @@
 ﻿using Newtonsoft.Json;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Provider;
+using ShippingProAPICollection.Provider.DHL;
+using ShippingProAPICollection.Provider.DPD;
+using ShippingProAPICollection.Provider.GLS;
 
 namespace ShippingProAPICollection.RestApi.Entities
 {
     public class ApplicationSettingService
     {
         private const string settingFilePath = "application-settings.json";
-       
-        public ApplicationSettingService()
+        private const string pushNotificationSection = "PushNotificationSettings";
+
+        private readonly IConfiguration configuration;
+
+        public ApplicationSettingService(IConfiguration configuration)
         {
-           
+            this.configuration = configuration;
         }
 
         /// <summary>
@@ -61,17 +67,88 @@ namespace ShippingProAPICollection.RestApi.Entities
         }
 
         /// <summary>
-        /// Build new collection settings  
+        /// Build new collection settings
         /// </summary>
         /// <returns></returns>
         public ShippingProAPICollectionSettings BuildCollectionSettings()
         {
             var currentSettings = LoadApplicationSettings();
             var s = new ShippingProAPICollectionSettings(currentSettings.AccountSettings);
-            currentSettings.ProviderSettings.ForEach(x => s.AddSettings(x.ContractID, x));
+            currentSettings.ProviderSettings.ForEach(x =>
+            {
+                FillSettings(x);
+                FillPushNotificationSettings(x);
+                s.AddSettings(x.ContractID, x);
+            });
             return s;
         }
 
+        private void FillSettings(ProviderSettings provider)
+        {
+            var section = configuration.GetSection(provider.ContractID);
+
+            switch (provider)
+            {
+                case GLSSettings gls:
+                    PopulateGls(section, gls);
+                    break;
+
+                case DPDSettings dpd:
+                    PopulateDpd(section, dpd);
+                    break;
+
+                case DHLSettings dhl:
+                    PopulateDhl(section, dhl);
+                    break;
+            }
+
+            static void PopulateGls(IConfigurationSection section, GLSSettings gls)
+            {
+                gls.ApiDomain = section["ApiDomain"] ?? gls.ApiDomain;
+                gls.ApplicationID = section["ApplicationID"] ?? gls.ApplicationID;
+                gls.ApplicationSecret = section["ApplicationSecret"] ?? gls.ApplicationSecret;
+                gls.ContactID = section["ContactID"] ?? gls.ContactID;
+                gls.CustomerID = section["CustomerID"] ?? gls.CustomerID;
+                gls.Username = section["Username"] ?? gls.Username;
+                gls.Password = section["Password"] ?? gls.Password;
+            }
+            static void PopulateDpd(IConfigurationSection section, DPDSettings dpd)
+            {
+                dpd.ApiDomain = section["ApiDomain"] ?? dpd.ApiDomain;
+                dpd.Username = section["Username"] ?? dpd.Username;
+                dpd.Password = section["Password"] ?? dpd.Password;
+            }
+            static void PopulateDhl(IConfigurationSection section, DHLSettings dhl)
+            {
+                dhl.ApiDomain = section["ApiDomain"] ?? dhl.ApiDomain;
+                dhl.Username = section["Username"] ?? dhl.Username;
+                dhl.Password = section["Password"] ?? dhl.Password;
+                dhl.APIKey = section["APIKey"] ?? dhl.APIKey;
+            }
+        }
+
+        /// <summary>
+        /// Push notification settings are not part of the saved settings, they are read from the secrets file (PushNotificationSettings:{ContractID})
+        /// </summary>
+        private void FillPushNotificationSettings(ProviderSettings provider)
+        {
+            var section = configuration.GetSection($"{pushNotificationSection}:{provider.ContractID}");
+
+            switch (provider)
+            {
+                case GLSSettings gls:
+                    gls.PushNotificationSettings = section.Get<GLSPushNotificationSettings>();
+                    break;
+
+                case DHLSettings dhl:
+                    dhl.PushNotificationSettings = section.Get<DHLPushNotificationSettings>();
+                    break;
+
+                case DPDSettings dpd:
+                    dpd.PushNotificationSettings = section.Get<DPDPushNotificationSettings>();
+                    break;
+            }
+        }
 
         private void SaveAndUpdateCurrentSettings(ShippingProAPICollectionSettings collectionSettings, ApplicationSettings newSettings)
         {
@@ -80,9 +157,10 @@ namespace ShippingProAPICollection.RestApi.Entities
             // Update application settings
             collectionSettings.OverrideSettings(BuildCollectionSettings());
         }
+
         private void SaveApplicationSettings(ApplicationSettings newSettings)
         {
-           File.WriteAllText(settingFilePath, JsonConvert.SerializeObject(newSettings));
+            File.WriteAllText(settingFilePath, JsonConvert.SerializeObject(newSettings));
         }
 
         /// <summary>

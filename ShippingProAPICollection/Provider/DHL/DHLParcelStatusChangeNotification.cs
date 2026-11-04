@@ -11,11 +11,20 @@ namespace ShippingProAPICollection.Provider.DHL
         [JsonIgnore]
         public override ShippingProviderType ShippingProviderType => ShippingProviderType.DHL;
 
+        /// <summary>
+        /// Headers of the incoming push request; set by the receiver, never read from the payload.
+        /// </summary>
+        [JsonIgnore]
+        public IReadOnlyDictionary<string, string>? RequestHeaders { get; set; }
+
         [JsonProperty("self")]
         public string? Self { get; set; }
 
         [JsonProperty("scope")]
         public string? Scope { get; set; }
+
+        [JsonProperty("secret")]
+        public string? Secret { get; set; }
 
         [JsonProperty("expires")]
         public string? Expires { get; set; }

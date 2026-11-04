@@ -23,8 +23,8 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
         [JsonProperty("type")]
         public string Type { get; set; }
 
-        [JsonProperty("accountID")]
-        public string AccountID { get; set; }
+        [JsonProperty("shipmentIDs")]
+        public List<string> ShipmentIDs { get; set; }
     }
 
     public class DHLWebhookHook
@@ -34,9 +34,6 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
 
         [JsonProperty("authentication")]
         public DHLWebhookAuthentication Authentication { get; set; }
-
-        [JsonProperty("headers")]
-        public List<DHLWebhookHeader> Headers { get; set; }
     }
 
     public class DHLWebhookAuthentication
@@ -49,14 +46,5 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
 
         [JsonProperty("token")]
         public string Token { get; set; }
-    }
-
-    public class DHLWebhookHeader
-    {
-        [JsonProperty("name")]
-        public string Name { get; set; }
-
-        [JsonProperty("value")]
-        public string Value { get; set; }
     }
 }

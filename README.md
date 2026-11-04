@@ -18,8 +18,7 @@ Welcome to our C# library, designed to integrate multiple shipping service APIs 
 - [Complete Example: Creating a Shipping Label with Custom Sender Address](#complete-example-creating-a-shipping-label-with-custom-sender-address)
 	- [Setup and Configuration](#setup-and-configuration)
 	- [Creating a Label with Custom Sender Address](#creating-a-label-with-custom-sender-address)
-- [RabbitMQ](#rabbitmq)
-	- [Setup](#setup)
+
 
 ## Provider
 
@@ -113,6 +112,41 @@ To finalize the setup, register the ShippingProAPICollectionService as a scoped 
 	providerSettings.AddSettings("TOF", tofSetting);
 
 
+
+## Push notification settings (REST API)
+`PushNotificationSettings` of the GLS, DHL and DPD provider settings are not stored in `application-settings.json`. The REST API reads them from the secrets file (`Tracking:Enabled` = `true` and `Tracking:SecretsFilePath` in `appsettings.json`), from the section `PushNotificationSettings:<ContractID>`:
+
+	{
+	  "PushNotificationSettings": {
+	    "GLS1": {
+	      "IsActive": true,
+	      "ApiDomain": "https://shipit-wbm-test01.gls-group.eu:443",
+	      "ContactID": "...",
+	      "WebhookName": "...",
+	      "WebhookUserId": "...",
+	      "WebhookUsername": "...",
+	      "WebhookPassword": "..."
+	    },
+	    "DHL1": {
+	      "ApiDomain": "sandbox",
+	      "APIKey": "...",
+	      "APILanguage": "de-DE",
+	      "Format": "Default",
+	      "AuthenticationToken": "...",
+	      "HookUri": "https://<your host>/push/dhl",
+	      "Subscriptions": [ { "Service": "parcel-de", "Events": [ "transit", "delivered" ] } ]
+	    },
+	    "DPD1": { "IsActive": true }
+	  }
+	}
+
+The DHL `AuthenticationToken` is a random string you generate yourself (e.g. `openssl rand -hex 32`, one per environment and contract). It is registered with the subscription and DHL sends it back in the `Authorization` header of every push, so it must not change without subscribing again.
+
+DHL parcels are subscribed one by one (subscription type `Shipment`) when their label is created, once per active entry of `Subscriptions`; the push to `HookUri` that DHL sends to validate a subscription is activated automatically. A subscription that fails never fails the label request. At most `PushSubscriptionDailyLimit` subscriptions per day are created (a property of the DHL provider settings in `application-settings.json`, default 500); after that, or when DHL answers 429, parcels are not subscribed until the next UTC day. The count is kept in memory and starts again after a restart. Subscriptions are not deleted; they end at the `expires` date DHL returns.
+
+`Service` (`parcel-de`, `express`, `ecommerce`) and `Events` (`pre-transit`, `transit`, `delivered`, `failure`, `unknown`) take the DHL values; the C# names (`ParcelDe`, `Transit`, ...) work too. A subscription with any other value is dropped when the settings are read.
+
+Without a matching section the push settings stay empty and the push endpoints answer with an error. The file is read when the application starts and when provider settings are updated.
 
 ## Add multiple contract accounts
 At times, you may need to utilize multiple contract accounts from the same provider. You can add multiple contracts by specifying a contract ID like this:
@@ -275,100 +309,4 @@ catch (Exception ex)
 }
 ```
 
-## RabbitMQ
-
-Parcel tracking uses Push notifications to inform you about the status of your shipments. To receive these notifications, you need to set up a RabbitMQ server and configure it to listen for messages from the shipping providers.
-
-## Setup
-### 1. Create a RabbitMQ Queue  
-
-### 2. Create a secrets.json file  
-IMPORTANT: replace the placeholder values (inkl. RabbitMqPort, 5672 is the default RabbitMQ port) with your actual RabbitMQ configuration:
-```json
-{
-  "RabbitMq": {
-    "TargetQueue": "YOUR_TARGET_QUEUE",
-    "JobQueue": "YOUR_JOB_QUEUE",
-    "RabbitMqUser": "YOUR_RABBITMQ_USER",
-    "RabbitMqPassword": "YOUR_RABBITMQ_PASSWORD",
-    "RabbitMqHostname": "YOUR_RABBITMQ_HOSTNAME",
-    "RabbitMqPort": 5672, 
-    "RabbitMqVirtualHost": "YOUR_RABBITMQ_VIRTUAL_HOST"
-  }
-}
-```
-
-### 3. Secure the secrets.json file
-Place the file into a secure location outside your source code directory and lock it down so that only your application can read it. 
-
-```powershell
-icacls "YOUR_PATH_TO_SECRETS" /inheritance:r
-icacls "YOUR_PATH_TO_SECRETS" /grant "Administrators:(OI)(CI)F"
-```
-
-and your application user:
-
-**IIS (ApplicationPoolIdentity)**
-
-```powershell
-icacls $secretsDir /grant "IIS AppPool\MyApiPool:(OI)(CI)R"
-```
-
-**IIS (custom identity)**
-
-```powershell
-icacls $secretsDir /grant "MYDOMAIN\svc-myapi:(OI)(CI)R"
-# or, for a local user:
-icacls $secretsDir /grant "$env:COMPUTERNAME\svc-myapi:(OI)(CI)R"
-```
-
-**Windows Service (virtual service account)**
-
-```powershell
-sc.exe config MyApi obj= "NT SERVICE\MyApi"
-icacls $secretsDir /grant "NT SERVICE\MyApi:(OI)(CI)R"
-```
-
-**Windows Service (gMSA)**
-
-```powershell
-icacls $secretsDir /grant "MYDOMAIN\gmsa-myapi$:(OI)(CI)R"
-```
-
-**Windows Service (Network / Local Service)**
-
-```powershell
-icacls $secretsDir /grant "NT AUTHORITY\NETWORK SERVICE:(OI)(CI)R"
-# or
-icacls $secretsDir /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)R"
-```
-
-**Kestrel started manually / Scheduled Task**
-
-```powershell
-icacls $secretsDir /grant "MYDOMAIN\deploy-user:(OI)(CI)R"
-```
-
-
-### 4. Update appSettings.json 
-
-Update your appSettings.json to include the path to the secrets.json file:
-
-```json
-{
-"Tracking": {
-  "SecretsFilePath": "path/to/secrets.json"
-  }
-}
-```
-
-and set	Tracking:Enabled to true in your appSettings.json otherwise secrets will not be read:
-
-```json
-{
- "Tracking": {
-    "Enabled": true,  
-  }
-}
-```
 

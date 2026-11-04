@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using System.ComponentModel;
 using System.Runtime.Serialization;
 
 namespace ShippingProAPICollection.Provider.DHL.Entities
@@ -8,17 +9,18 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
     /// Tracking events a DHL push subscription can be registered for.
     /// </summary>
     [JsonConverter(typeof(StringEnumConverter))]
+    [TypeConverter(typeof(DHLEnumTypeConverter<DHLNotificationEventTypes>))]
     public enum DHLNotificationEventTypes
     {
-        [EnumMember(Value = "Pre-Transit")]
+        [EnumMember(Value = "pre-transit")]
         PreTransit,
-        [EnumMember(Value = "Transit")]
+        [EnumMember(Value = "transit")]
         Transit,
-        [EnumMember(Value = "Delivered")]
+        [EnumMember(Value = "delivered")]
         Delivered,
-        [EnumMember(Value = "Failure")]
+        [EnumMember(Value = "failure")]
         Failure,
-        [EnumMember(Value = "Unknown")]
+        [EnumMember(Value = "unknown")]
         Unknown
     }
 }

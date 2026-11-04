@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Provider.DHL.Entities;
 
@@ -25,7 +26,16 @@ namespace ShippingProAPICollection.Provider.DHL
         public required string APILanguage { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
 
-        public required DHLPushNotificationSettings PushNotificationSettings { get; set; }
+        /// <summary>
+        /// Push subscriptions (one per parcel and subscription entry) DHL allows per day; no further parcels are subscribed once it is reached.
+        /// </summary>
+        public int PushSubscriptionDailyLimit { get; set; } = 500;
+
+        /// <summary>
+        /// Filled from the secrets file, never persisted with the provider settings.
+        /// </summary>
+        [JsonIgnore]
+        public DHLPushNotificationSettings? PushNotificationSettings { get; set; }
     }
 
     public class DHLPushNotificationSettings
@@ -34,11 +44,15 @@ namespace ShippingProAPICollection.Provider.DHL
         public required string APIKey { get; set; }
         public required string APILanguage { get; set; }
         public required string Format { get; set; }
-        public required string AuthenticationHeader { get; set; }
+        /// <summary>
+        /// Name of the header DHL sends the <see cref="AuthenticationToken"/> in; not a secret, so not read from the secrets file.
+        /// </summary>
+        public string AuthenticationHeader { get; set; } = "Authorization";
         public required string AuthenticationToken { get; set; }
-        public required string WebhookHeaderName { get; set; }
-        public required string WebhookHeaderValue { get; set; }
-        public required string AccountID { get; set; }
+        /// <summary>
+        /// https URL DHL pushes to (POST /push/dhl of the REST API).
+        /// </summary>
+        public required string HookUri { get; set; }
         /// <summary>
         /// One push subscription is registered per entry.
         /// </summary>
@@ -47,6 +61,9 @@ namespace ShippingProAPICollection.Provider.DHL
 
     public class DHLPushSubscription : PushNotificationSettings
     {
+        // Active unless a configuration explicitly says otherwise, so entries that never set IsActive keep subscribing.
+        public DHLPushSubscription() => IsActive = true;
+
         public required DHLServiceDivisionTypes Service { get; set; }
         public required DHLNotificationEventTypes[] Events { get; set; }
     }

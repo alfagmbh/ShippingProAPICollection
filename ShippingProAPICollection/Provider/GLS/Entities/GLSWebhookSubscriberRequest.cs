@@ -23,10 +23,10 @@ namespace ShippingProAPICollection.Provider.GLS.Entities
         public required string ContactId { get; set; }
 
         [JsonProperty("portalUsername")]
-        public required string PortalUsername { get; set; }
+        public string? PortalUsername { get; set; }
 
         [JsonProperty("portalPassword")]
-        public required string PortalPassword { get; set; }
+        public string? PortalPassword { get; set; }
 
         [JsonProperty("webhookUrl")]
         public override string HookUri { get; set; }

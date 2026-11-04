@@ -2,7 +2,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Provider.DHL;
-using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.Provider.DPD;
 using ShippingProAPICollection.Provider.GLS;
 using ShippingProAPICollection.Provider.TRANSOFLEX;
@@ -42,21 +41,12 @@ namespace ShippingProAPICollection.NUnitTests
             GLSSettings glsSettings = new GLSSettings()
             {
                 ApiDomain = "https://shipit-wbm-test01.gls-group.eu:443",
-                ContactID = "276a45fkqM",
-                Password = "lXZBIF7uRccyK7Ohr64d",
-                Username = "276a45fkqM",
+                ContactID = configuration["GLS_ContactID"] ?? "",
+                Password = configuration["GLS_Password"] ?? "",
+                Username = configuration["GLS_Username"] ?? "",
                 ApplicationID = configuration["GLS_API_ID"] ?? "",
                 ApplicationSecret = configuration["GLS_API_SECRET"] ?? "",
-                PushNotificationSettings = new GLSPushNotificationSettings
-                {
-                    ApiDomain = "https://shipit-wbm-test01.gls-group.eu:443",
-                    ContactID = "*********",
-                    IsActive = true,
-                    WebhookName = "GLSWebhook",
-                    WebhookPassword = "*******",
-                    WebhookUserId = "********",
-                    WebhookUsername = "*********"
-                }
+                PushNotificationSettings = configuration.GetSection("PushNotificationSettings:GLS1").Get<GLSPushNotificationSettings>()
             };
 
             providerSettings.AddSettings("GLS", glsSettings);
@@ -72,19 +62,7 @@ namespace ShippingProAPICollection.NUnitTests
                 LabelPrintFormat = "910-300-410",
                 APIKey = configuration["DHLAPIKey"] ?? "",
                 APILanguage = "de-DE",
-                PushNotificationSettings = new DHLPushNotificationSettings
-                {
-                    ApiDomain = "sandbox",
-                    APIKey = configuration["DHLAPIKey"] ?? "",
-                    APILanguage = "de-DE",
-                    Format = "JSON",
-                    AuthenticationHeader = "Authorization",
-                    AuthenticationToken = "token",
-                    WebhookHeaderName = "X-Header",
-                    WebhookHeaderValue = "value",
-                    AccountID = "account",
-                    Subscriptions = [new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [DHLNotificationEventTypes.Transit, DHLNotificationEventTypes.Delivered] }]
-                }
+                PushNotificationSettings = configuration.GetSection("PushNotificationSettings:DHL1").Get<DHLPushNotificationSettings>()
             };
 
             providerSettings.AddSettings("DHL", dhlSettings);
@@ -96,10 +74,7 @@ namespace ShippingProAPICollection.NUnitTests
                 DepotNumber = "0191",
                 Username = "sandboxdpd",
                 Password = "xMmshh1",
-                PushNotificationSettings = new DPDPushNotificationSettings
-                {
-                    IsActive = true,
-                }
+                PushNotificationSettings = configuration.GetSection("PushNotificationSettings:DPD1").Get<DPDPushNotificationSettings>()
             };
 
             providerSettings.AddSettings("DPD", dpdSettings);

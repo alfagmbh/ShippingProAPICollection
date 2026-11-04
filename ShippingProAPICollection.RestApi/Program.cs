@@ -68,10 +68,8 @@ namespace ShippingProAPICollection.RestApi
 
                
             }
-           
 
-
-            ApplicationSettingService applicationSettingService = new ApplicationSettingService();
+            ApplicationSettingService applicationSettingService = new ApplicationSettingService(builder.Configuration);
             builder.Services.AddSingleton(applicationSettingService);
             builder.Services.AddSingleton(applicationSettingService.BuildCollectionSettings());
 

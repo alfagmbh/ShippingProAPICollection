@@ -105,16 +105,16 @@ namespace ShippingProAPICollection
         /// Processes an incoming provider push. DPD pushes are passed as a key/value map of the query string,
         /// GLS pushes are authorized with the Authorization header of the request by the GLS provider.
         /// </summary>
-        public Task<ParcelTrackingEventResult> ProcessPushNotification(ShippingProviderType type, object notificationData, string? authorizationHeader = null, CancellationToken ct = default)
+        public Task<ParcelTrackingEventResult> ProcessPushNotification(ShippingProviderType type, object notificationData, string? authorizationHeader = null, CancellationToken ct = default, IReadOnlyDictionary<string, string>? requestHeaders = null)
         {
             switch (type)
             {
                 case ShippingProviderType.DHL:
                     var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-                    return serviceDHL.ProcessParcelStatusChangeNotification(
-                        notificationData is DHLParcelStatusChangeNotification dhlNotification
-                        ? dhlNotification
-                        : throw new InvalidOperationException("Invalid notification type"), ct);
+                    var dhlNotification = notificationData as DHLParcelStatusChangeNotification
+                        ?? throw new InvalidOperationException("Invalid notification type");
+                    dhlNotification.RequestHeaders = requestHeaders;
+                    return serviceDHL.ProcessParcelStatusChangeNotification(dhlNotification, ct);
 
                 case ShippingProviderType.DPD:
                     var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().First();
@@ -137,25 +137,24 @@ namespace ShippingProAPICollection
 
         /// <summary>
         /// Runs the push notification setup workflow of the provider (auth, subscribe) using the provider settings.
-        /// DHL subscriptions still have to be activated via <see cref="ActivateDHLSubscriber"/>.
+        /// Returns what the provider answered (GLS returns the webhook user id to store in the secrets file; DHL and DPD an empty list).
         /// </summary>
-        public async Task InitializePushNotification(ShippingProviderType type, string hookUri, CancellationToken ct = default)
+        public async Task<IReadOnlyList<PushSubscriptionInfo>> InitializePushNotification(ShippingProviderType type, string hookUri, CancellationToken ct = default)
         {
             EnsureHttpsUrl(hookUri, nameof(hookUri));
 
             switch (type)
             {
                 case ShippingProviderType.DHL:
-                    await GetServiceProviderFromType<DHLShipmentService>().First().InitializePushNotification(hookUri, ct);
-                    break;
+                    // DHL parcels are subscribed one by one when their label is created.
+                    return [];
 
                 case ShippingProviderType.GLS:
-                    await GetServiceProviderFromType<GLSShipmentService>().First().InitializePushNotification(hookUri, ct);
-                    break;
+                    return [await GetServiceProviderFromType<GLSShipmentService>().First().SubscribeToPushNotification(hookUri, ct)];
 
                 case ShippingProviderType.DPD:
                     // DPD pushes are configured on the DPD side, nothing to set up here.
-                    break;
+                    return [];
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
@@ -200,7 +199,7 @@ namespace ShippingProAPICollection
         {
             var service = providerServices.Where(x => x.Value.GetType() == typeof(T)).Select(x => x.Value as T).ToArray();
             if (service.Length > 0) return service;
-            throw new InvalidOperationException("Service not found for the specified type.");
+            throw new InvalidOperationException($"No {typeof(T).Name} configured. Add a provider of this type to the application settings.");
         }
         
         public Task<GLSParcelDetails[]> GetGLSParcelInfo(string parcelNumber) => GetServiceProviderFromType<GLSShipmentService>().First().GetParcelDetails(new[] { parcelNumber });

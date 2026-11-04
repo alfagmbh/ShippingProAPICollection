@@ -1,4 +1,5 @@
-﻿using ShippingProAPICollection.Models.Entities;
+﻿using Newtonsoft.Json;
+using ShippingProAPICollection.Models.Entities;
 
 namespace ShippingProAPICollection.Provider.DPD
 {
@@ -17,7 +18,11 @@ namespace ShippingProAPICollection.Provider.DPD
         /// </summary>
         public required string APILanguage { get; set; }
         public override float MaxPackageWeight { get; set; } = 31.5f;
-        public required DPDPushNotificationSettings PushNotificationSettings { get; set; }
+        /// <summary>
+        /// Filled from the secrets file, never persisted with the provider settings.
+        /// </summary>
+        [JsonIgnore]
+        public DPDPushNotificationSettings? PushNotificationSettings { get; set; }
     }
 
     public class DPDPushNotificationSettings : PushNotificationSettings

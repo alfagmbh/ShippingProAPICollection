@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
 using ShippingProAPICollection.Provider.DHL.Entities;
@@ -27,10 +28,18 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         [HttpPost]
         [Route("{type}")]
-        [ProducesResponseType(typeof(object), (int)HttpStatusCode.OK)]
+        /// <summary>
+        /// Transforms a provider push into tracking events. 200 when processed, 203 when the push was received but could not be processed (result status Failed).
+        /// DHL handshake pushes (subscription.validate) activate the subscription and come back with its id.
+        /// </summary>
+        [ProducesResponseType(typeof(ParcelTrackingEventResult), (int)HttpStatusCode.OK)]
+        [ProducesResponseType(typeof(ParcelTrackingEventResult), (int)HttpStatusCode.NonAuthoritativeInformation)]
         [ProducesResponseType(typeof(void), (int)HttpStatusCode.Unauthorized)]
         public async Task<IActionResult> ProcessPushNotification([FromRoute] ShippingProviderType type, [FromBody] object notificationData, CancellationToken ct) =>
-            await HandleProcess(t => shippingProAPICollectionService.ProcessPushNotification(type, notificationData, Request.Headers.Authorization.ToString(), t), ct);
+            await HandleProcessWithResult(
+                t => shippingProAPICollectionService.ProcessPushNotification(type, notificationData, Request.Headers.Authorization.ToString(), t, RequestHeaders()),
+                ct,
+                result => result.Status == NotificationResultStatus.Failed ? StatusCode(StatusCodes.Status203NonAuthoritative, result) : Ok(result));
 
 
         #endregion push notification endpoits
@@ -39,12 +48,19 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         /// <summary>
         /// Sets up push notifications for the provider (auth and subscribe as needed) using the provider settings.
-        /// DHL subscriptions still have to be activated via dhl/activate.
+        /// DHL has nothing to set up here: parcels are subscribed when their label is created and activated when DHL's validation push arrives.
+        /// Returns what the provider answered per subscription: 200 when all were accepted, 207 when any was rejected (see the Error of each entry).
+        /// ValuesToSave holds provider-issued values (e.g. the GLS WebhookUserId) that have to be stored in the secrets file.
         /// </summary>
         [HttpPost]
         [Route("{type}/ini")]
+        [ProducesResponseType(typeof(IReadOnlyList<PushSubscriptionInfo>), (int)HttpStatusCode.OK)]
+        [ProducesResponseType(typeof(IReadOnlyList<PushSubscriptionInfo>), StatusCodes.Status207MultiStatus)]
         public async Task<IActionResult> Ini([FromRoute] ShippingProviderType type, [FromBody, BindRequired] PushInitRequest request, CancellationToken ct) =>
-            await HandleProcess(t => shippingProAPICollectionService.InitializePushNotification(type, request.HookUri, t), ct);
+            await HandleProcessWithResult(
+                t => shippingProAPICollectionService.InitializePushNotification(type, request.HookUri, t),
+                ct,
+                SubscriptionsResult);
 
         [HttpPost]
         [Route("dhl/activate")]
@@ -54,6 +70,18 @@ namespace ShippingProAPICollection.RestApi.Controllers
         #endregion subscribe
 
         #region private handle method
+
+        private Dictionary<string, string> RequestHeaders() =>
+            Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+
+        private IActionResult SubscriptionsResult(IReadOnlyList<PushSubscriptionInfo> subscriptions) =>
+            subscriptions.Any(s => s.Error is not null) ? StatusCode(StatusCodes.Status207MultiStatus, subscriptions) : Ok(subscriptions);
+
+        private async Task<IActionResult> HandleProcessWithResult<T>(Func<CancellationToken, Task<T>> process, CancellationToken ct, Func<T, IActionResult> onSuccess)
+        {
+            T result = default!;
+            return await HandleProcess(async t => result = await process(t), ct, () => onSuccess(result));
+        }
 
         private async Task<IActionResult> HandleProcess(Func<CancellationToken, Task> process, CancellationToken ct, Func<IActionResult>? onSuccess = null)
         {
