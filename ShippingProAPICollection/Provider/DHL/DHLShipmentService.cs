@@ -1,4 +1,3 @@
-using System.Globalization;
 using Newtonsoft.Json;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -652,19 +651,15 @@ namespace ShippingProAPICollection.Provider.DHL
             if (!isHandshake && !HasValidPushCredentials(dhlParcelStatusChangeNotification.RequestHeaders))
                 throw new UnauthorizedAccessException("Invalid DHL push notification credentials.");
 
-            if (isHandshake)
-            {
-                return await ProzessHandshake(dhlParcelStatusChangeNotification, cancelToken).ConfigureAwait(false);
-            }
-
-            return ProzessParcelStatus(dhlParcelStatusChangeNotification);
+            return isHandshake ? await ProzessHandshake(dhlParcelStatusChangeNotification, cancelToken)
+                : ProzessParcelStatus(dhlParcelStatusChangeNotification);
         }
 
         private static ParcelTrackingEventResult ProzessParcelStatus(DHLParcelStatusChangeNotification dhlParcelStatusChangeNotification)
         {
             if (dhlParcelStatusChangeNotification.Shipments is null ||
-                            dhlParcelStatusChangeNotification.Shipments.Count == 0 ||
-                            dhlParcelStatusChangeNotification.Shipments.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || s.Status is null))
+                dhlParcelStatusChangeNotification.Shipments.Count == 0 ||
+                    dhlParcelStatusChangeNotification.Shipments.Any(s => s is null || string.IsNullOrWhiteSpace(s.Id) || s.Status is null))
                 return new ParcelTrackingEventResult()
                 {
                     Status = NotificationResultStatus.Failed,
