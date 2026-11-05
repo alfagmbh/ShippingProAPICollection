@@ -674,6 +674,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 request.ServiceType == GLSServiceType.GSATURDAY10 ||
                 request.ServiceType == GLSServiceType.GSATURDAY12;
 
+            
             if (request.WithEmailNotification && !isExpressServiceType)
             {
                 services.Add(new ShipmentService { Service = new FlexDeliveryService() });

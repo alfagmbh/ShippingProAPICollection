@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
-using ShippingProAPICollection.Provider.DHL.Entities;
 using ShippingProAPICollection.RestApi.Entities.Error;
 
 namespace ShippingProAPICollection.RestApi.Controllers
@@ -26,18 +25,20 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         #region push notification endpoits
 
-        [HttpPost]
-        [Route("{type}")]
         /// <summary>
-        /// Transforms a provider push into tracking events. 200 when processed, 203 when the push was received but could not be processed (result status Failed).
-        /// DHL handshake pushes (subscription.validate) activate the subscription and come back with its id.
+        /// Receives a provider push. The caller forwards the request exactly as it received it (method, headers, query and body), nothing is bound or built by the caller:
+        /// the request is handled here by the type in the route (DHL, GLS or DPD). 200 when processed, 203 when the push was received but could not be processed (result status Failed).
+        /// DHL: tracking pushes need the push token header; the handshake pushes are acknowledged with the subscription id, and subscription.validate activates
+        /// the subscription (its DHL-API-Hook-Secret header has to be forwarded as received).
         /// </summary>
+        [AcceptVerbs("GET", "POST")]
+        [Route("{type}")]
         [ProducesResponseType(typeof(ParcelTrackingEventResult), (int)HttpStatusCode.OK)]
         [ProducesResponseType(typeof(ParcelTrackingEventResult), (int)HttpStatusCode.NonAuthoritativeInformation)]
         [ProducesResponseType(typeof(void), (int)HttpStatusCode.Unauthorized)]
-        public async Task<IActionResult> ProcessPushNotification([FromRoute] ShippingProviderType type, [FromBody] object notificationData, CancellationToken ct) =>
+        public async Task<IActionResult> ProcessPushNotification([FromRoute] ShippingProviderType type, CancellationToken ct) =>
             await HandleProcessWithResult(
-                t => shippingProAPICollectionService.ProcessPushNotification(type, notificationData, Request.Headers.Authorization.ToString(), t, RequestHeaders()),
+                t => shippingProAPICollectionService.ProcessPushNotification(type, Request, t),
                 ct,
                 result => result.Status == NotificationResultStatus.Failed ? StatusCode(StatusCodes.Status203NonAuthoritative, result) : Ok(result));
 
@@ -48,9 +49,9 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         /// <summary>
         /// Sets up push notifications for the provider (auth and subscribe as needed) using the provider settings.
-        /// DHL parcels are subscribed when their label is created and activated when DHL's validation push arrives; TrackingNumber subscribes parcels manually
-        /// (subject to the same daily limit), with HookUri overriding the one in the secrets file. The call then waits up to 15 s for the activation,
-        /// each entry lists its TrackingNumbers and whether it is Activated; an entry that was not subscribed or not activated carries an Error.
+        /// DHL parcels are subscribed when their label is created; TrackingNumber subscribes parcels manually (subject to the same daily limit),
+        /// with HookUri overriding the one in the secrets file. Each entry lists its TrackingNumbers; an entry that was not subscribed carries an Error.
+        /// The subscriptions are activated when DHL's validation push reaches the push endpoint.
         /// Returns what the provider answered per subscription: 200 when all were accepted, 207 when any was rejected (see the Error of each entry).
         /// ValuesToSave holds provider-issued values (e.g. the GLS WebhookUserId) that have to be stored in the secrets file.
         /// </summary>
@@ -64,17 +65,9 @@ namespace ShippingProAPICollection.RestApi.Controllers
                 ct,
                 SubscriptionsResult);
 
-        [HttpPost]
-        [Route("dhl/activate")]
-        public async Task<IActionResult> ActivateDHLSubscriber([FromBody, BindRequired] DHLSubscriberActivatorRequest request, CancellationToken ct) =>
-            await HandleProcess(t => shippingProAPICollectionService.ActivateDHLSubscriber(request, t), ct);
-
         #endregion subscribe
 
         #region private handle method
-
-        private Dictionary<string, string> RequestHeaders() =>
-            Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase);
 
         private IActionResult SubscriptionsResult(IReadOnlyList<PushSubscriptionInfo> subscriptions) =>
             subscriptions.Any(s => s.Error is not null) ? StatusCode(StatusCodes.Status207MultiStatus, subscriptions) : Ok(subscriptions);

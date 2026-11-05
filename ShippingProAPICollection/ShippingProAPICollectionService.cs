@@ -1,4 +1,7 @@
+using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
+using Newtonsoft.Json;
 using ShippingProAPICollection.Models;
 using ShippingProAPICollection.Models.Entities;
 using ShippingProAPICollection.Models.Error;
@@ -102,36 +105,62 @@ namespace ShippingProAPICollection
         }
 
         /// <summary>
-        /// Processes an incoming provider push. DPD pushes are passed as a key/value map of the query string,
-        /// GLS pushes are authorized with the Authorization header of the request by the GLS provider.
+        /// Processes the request of an incoming provider push exactly as the caller received it (method, headers, query and body): checks the type,
+        /// builds the notification of that provider from the request and processes it. DHL (JSON body, push token / hook secret in the headers),
+        /// GLS (JSON body, Authorization header) and DPD (query string, optionally a JSON object body) are supported.
         /// </summary>
-        public Task<ParcelTrackingEventResult> ProcessPushNotification(ShippingProviderType type, object notificationData, string? authorizationHeader = null, CancellationToken ct = default, IReadOnlyDictionary<string, string>? requestHeaders = null)
+        public async Task<ParcelTrackingEventResult> ProcessPushNotification(ShippingProviderType type, HttpRequest request, CancellationToken ct = default)
         {
             switch (type)
             {
                 case ShippingProviderType.DHL:
                     var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-                    var dhlNotification = notificationData as DHLParcelStatusChangeNotification
-                        ?? throw new InvalidOperationException("Invalid notification type");
-                    dhlNotification.RequestHeaders = requestHeaders;
-                    return serviceDHL.ProcessParcelStatusChangeNotification(dhlNotification, ct);
+                    var dhlNotification = await ReadJsonBody<DHLParcelStatusChangeNotification>(request, ct);
+                    dhlNotification.RequestHeaders = request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+                    return await serviceDHL.ProcessParcelStatusChangeNotification(dhlNotification, ct);
 
                 case ShippingProviderType.DPD:
                     var serviceDPD = GetServiceProviderFromType<DPDShipmentService>().First();
-                    return serviceDPD.ProcessParcelStatusChangeNotification(
-                        notificationData is IReadOnlyDictionary<string, string?> dpdValues
-                        ? DPDParcelStatusChangeNotification.FromKeyValues(dpdValues)
-                        : throw new InvalidOperationException("Invalid notification type"), ct);
+                    var dpdValues = request.Query.ToDictionary(q => q.Key, q => (string?)q.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+                    var dpdBody = await ReadBody(request, ct);
+                    if (!string.IsNullOrWhiteSpace(dpdBody))
+                        foreach (var pair in ParseJson<Dictionary<string, string?>>(dpdBody))
+                            dpdValues[pair.Key] = pair.Value;
+                    return await serviceDPD.ProcessParcelStatusChangeNotification(DPDParcelStatusChangeNotification.FromKeyValues(dpdValues), ct);
 
                 case ShippingProviderType.GLS:
                     var serviceGLS = GetServiceProviderFromType<GLSShipmentService>().First();
-                    var glsNotification = notificationData as GLSParcelStatusChangeNotification
-                        ?? throw new InvalidOperationException("Invalid notification type");
-                    glsNotification.AuthorizationHeader = authorizationHeader;
-                    return serviceGLS.ProcessParcelStatusChangeNotification(glsNotification, ct);
+                    var glsNotification = await ReadJsonBody<GLSParcelStatusChangeNotification>(request, ct);
+                    glsNotification.AuthorizationHeader = request.Headers["Authorization"].ToString();
+                    return await serviceGLS.ProcessParcelStatusChangeNotification(glsNotification, ct);
 
                 default:
                     throw new InvalidOperationException("Unknown shipping provider");
+            }
+        }
+
+        private static async Task<string> ReadBody(HttpRequest request, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var reader = new StreamReader(request.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true);
+            return await reader.ReadToEndAsync();
+        }
+
+        private static async Task<T> ReadJsonBody<T>(HttpRequest request, CancellationToken ct) where T : class =>
+            ParseJson<T>(await ReadBody(request, ct));
+
+        /// <summary>
+        /// A body that is not valid JSON (or does not fit the notification) is an invalid request, not an unexpected error.
+        /// </summary>
+        private static T ParseJson<T>(string json) where T : class
+        {
+            try
+            {
+                return JsonConvert.DeserializeObject<T>(json) ?? throw new InvalidOperationException("Invalid notification type");
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("Invalid notification type", ex);
             }
         }
 
@@ -151,7 +180,7 @@ namespace ShippingProAPICollection
                     if (trackingNumbers is null || trackingNumbers.Length == 0)
                         return [];
 
-                    return await GetServiceProviderFromType<DHLShipmentService>().First().SubscribeToPushNotification(trackingNumbers, hookUri, waitForActivation: true, ct: ct);
+                    return await GetServiceProviderFromType<DHLShipmentService>().First().SubscribeToPushNotification(trackingNumbers, hookUri, ct);
 
                 case ShippingProviderType.GLS:
                     return [await GetServiceProviderFromType<GLSShipmentService>().First().SubscribeToPushNotification(hookUri, ct)];
@@ -169,13 +198,6 @@ namespace ShippingProAPICollection
         {
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
                 throw new ArgumentException("Hook URL must be an absolute https URL.", paramName);
-        }
-
-        public async Task ActivateDHLSubscriber(DHLSubscriberActivatorRequest request, CancellationToken ct = default)
-        {
-            // Activation only uses values from the request, so a single call is enough regardless of how many DHL contracts exist.
-            var serviceDHL = GetServiceProviderFromType<DHLShipmentService>().First();
-            await serviceDHL.ActivateSubscriber(request, ct);
         }
 
         public async Task Confirm(string contractID, string confirmId, CancellationToken ct = default)

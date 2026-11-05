@@ -133,7 +133,7 @@ To finalize the setup, register the ShippingProAPICollectionService as a scoped 
 	      "APILanguage": "de-DE",
 	      "Format": "Default",
 	      "AuthenticationToken": "...",
-	      "HookUri": "https://<your host>/push/dhl",
+	      "HookUri": "https://<webhook of your system>",
 	      "Subscriptions": [ { "Service": "parcel-de", "Events": [ "transit", "delivered" ] } ]
 	    },
 	    "DPD1": { "IsActive": true }
@@ -142,11 +142,18 @@ To finalize the setup, register the ShippingProAPICollectionService as a scoped 
 
 The DHL `AuthenticationToken` is a random string you generate yourself (e.g. `openssl rand -hex 32`, one per environment and contract). It is registered with the subscription and DHL sends it back in the `Authorization` header of every push, so it must not change without subscribing again.
 
-DHL parcels are subscribed one by one (subscription type `Shipment`) when their label is created, once per active entry of `Subscriptions`; the push to `HookUri` that DHL sends to validate a subscription is activated automatically. A subscription that fails never fails the label request. At most `PushSubscriptionDailyLimit` subscriptions per day are created (a property of the DHL provider settings in `application-settings.json`, default 500); after that, or when DHL answers 429, parcels are not subscribed until the next UTC day. The count is kept in memory and starts again after a restart. Subscriptions are not deleted; they end at the `expires` date DHL returns.
+DHL parcels are subscribed one by one (subscription type `Shipment`) when their label is created, once per active entry of `Subscriptions`; DHL pushes to `HookUri`, the webhook of your system (not of this API). A subscription that fails never fails the label request. At most `PushSubscriptionDailyLimit` subscriptions per day are created (a property of the DHL provider settings in `application-settings.json`, default 500); after that, or when DHL answers 429, parcels are not subscribed until the next UTC day. The count is kept in memory and starts again after a restart. Subscriptions are not deleted; they end at the `expires` date DHL returns.
 
-Parcels that were not subscribed automatically (limit reached, DHL error, missing settings) can be subscribed manually with `POST /push/dhl/ini` and the body `{ "hookUri": "https://<your host>/push/dhl", "trackingNumber": [ "..." ] }`. The `hookUri` of the request replaces `HookUri` from the secrets for these subscriptions, the same daily limit applies, and errors are returned (200 when all subscriptions were accepted, 207 when DHL rejected any) instead of being ignored. Without `trackingNumber` the call does nothing for DHL.
+Parcels that were not subscribed automatically (limit reached, DHL error, missing settings) can be subscribed manually with `POST /push/dhl/ini` and the body `{ "hookUri": "https://<webhook of your system>", "trackingNumber": [ "..." ] }`. The `hookUri` of the request replaces `HookUri` from the secrets for these subscriptions, the same daily limit applies, and errors are returned (200 when all subscriptions were accepted, 207 when DHL rejected any) instead of being ignored. Without `trackingNumber` the call does nothing for DHL.
 
-The answer of a manual DHL `ini` call has one entry per DHL subscription (up to 10 parcels each) with `trackingNumbers`, `subscriptionId`, `activated` and, when something went wrong, `error`. The call waits up to 15 seconds for DHL's validation push to arrive and be activated, so `activated: true` means the parcels are subscribed and activated. An entry with an `error` is either a rejection by DHL, a subscription that was created but not activated in time (DHL cannot reach the hook, or the push went to another application instance) or parcels that were not subscribed because of the daily limit.
+The answer of a manual DHL `ini` call has one entry per DHL subscription (up to 10 parcels each) with `trackingNumbers`, `subscriptionId` and, when something went wrong, `error` (a rejection by DHL, or parcels that were not subscribed because of the daily limit). The subscriptions are activated when DHL's validation push arrives, see below.
+
+DHL, GLS and DPD push to the webhook of your system, not to this API. Your system only forwards what it received: the request is sent unchanged (method, headers, query and body) to `/api/push/notification/{type}` (`DHL`, `GLS` or `DPD`; GET and POST are accepted). Nothing is built, parsed or escaped by your system, this API reads the request itself, checks the type, processes it and answers:
+- **DHL**: tracking pushes need the original `Authorization` header (it carries the push token that is checked) and come back as tracking events. The `subscription.validate` push is activated by this API itself: its `DHL-API-Hook-Secret` header has to be forwarded as received and must match the `secret` of the body (401 otherwise). `subscription.validate` and `subscription.ready` carry no push token (DHL does not send it with them) and are acknowledged with the subscription id. DHL then sends `subscription.ready`; the secret is only valid until the `expires` of the validate push.
+- **GLS**: the JSON body and the `Authorization` header.
+- **DPD**: the query string of the push (a JSON object body is accepted as well).
+
+A body that is not valid JSON is answered with 400.
 
 `Service` (`parcel-de`, `express`, `ecommerce`) and `Events` (`pre-transit`, `transit`, `delivered`, `failure`, `unknown`) take the DHL values; the C# names (`ParcelDe`, `Transit`, ...) work too. A subscription with any other value is dropped when the settings are read.
 

@@ -50,7 +50,7 @@ namespace ShippingProAPICollection.Provider.DHL
         public string AuthenticationHeader { get; set; } = "Authorization";
         public required string AuthenticationToken { get; set; }
         /// <summary>
-        /// https URL DHL pushes to (POST /push/dhl of the REST API).
+        /// https URL of the caller's webhook that DHL pushes to; the caller forwards the pushes to the push endpoint of the REST API.
         /// </summary>
         public required string HookUri { get; set; }
         /// <summary>
