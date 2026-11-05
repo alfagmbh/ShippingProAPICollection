@@ -38,6 +38,14 @@ namespace ShippingProAPICollection.Models
         /// </summary>
         public string? Error { get; set; }
         /// <summary>
+        /// DHL: the parcels this subscription covers.
+        /// </summary>
+        public string[]? TrackingNumbers { get; set; }
+        /// <summary>
+        /// DHL: true once the subscription was activated; only set when the subscribe call waited for the activation.
+        /// </summary>
+        public bool? Activated { get; set; }
+        /// <summary>
         /// Provider-issued values the caller has to store in the secrets file (key = setting name).
         /// </summary>
         public Dictionary<string, string>? ValuesToSave { get; set; }

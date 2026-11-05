@@ -18,6 +18,8 @@ namespace ShippingProAPICollection.Provider.DHL
         private const string DHLPushScopePush = "subscription.push";
         private const string DHLPushScopeValidate = "subscription.validate";
         private const int MaxShipmentIdsPerSubscription = 10;
+        private static readonly TimeSpan ActivationWait = TimeSpan.FromSeconds(15);
+        private static readonly TimeSpan ActivationPollInterval = TimeSpan.FromMilliseconds(500);
 
         private DHLSettings providerSettings = null!;
         private ShippingProAPIShipFromAddress defaultShipFromAddress = null!;
@@ -426,9 +428,12 @@ namespace ShippingProAPICollection.Provider.DHL
         /// Subscribes the parcels to DHL push notifications (subscription type "Shipment", at most <see cref="MaxShipmentIdsPerSubscription"/> parcels per request)
         /// for every active subscription entry. Stops when the daily limit of the contract is reached or DHL answers 429.
         /// Returns one entry per request with what DHL answered (a rejected subscription has <see cref="PushSubscriptionInfo.Error"/> set).
-        /// The subscriptions are activated when DHL's validation push arrives, see <see cref="ProcessParcelStatusChangeNotification"/>.
+        /// DHL calls <paramref name="hookUri"/>, or the HookUri of the push settings when it is not given.
+        /// The subscriptions are activated when DHL's validation push arrives, see <see cref="ProcessParcelStatusChangeNotification"/>;
+        /// with <paramref name="waitForActivation"/> the call waits for that and reports it per entry (<see cref="PushSubscriptionInfo.Activated"/>).
+        /// Parcels that were not subscribed because of the daily limit are returned as an entry with an error.
         /// </summary>
-        public async Task<List<PushSubscriptionInfo>> SubscribeShipments(IEnumerable<string?> trackingNumbers, CancellationToken ct = default)
+        public async Task<List<PushSubscriptionInfo>> SubscribeToPushNotification(IEnumerable<string?> trackingNumbers, string? hookUri = null, bool waitForActivation = false, CancellationToken ct = default)
         {
             var results = new List<PushSubscriptionInfo>();
             var settings = providerSettings.PushNotificationSettings;
@@ -436,35 +441,82 @@ namespace ShippingProAPICollection.Provider.DHL
             if (settings is null || numbers.Count == 0)
                 return results;
 
-            ValidatePushSettings(settings);
+            hookUri ??= settings.HookUri;
+            ValidatePushSettings(settings, hookUri);
 
             using var client = new RestClient(new RestClientOptions(string.Format("https://api-{0}.dhl.com/tracking/push/v1", settings.ApiDomain))
             {
                 Timeout = TimeSpan.FromSeconds(30),
             });
 
+            var limitReached = false;
             foreach (var subscription in settings.Subscriptions.Where(s => s.IsActive))
             {
                 var allowed = DHLPushSubscriptionQuota.Reserve(providerSettings.ContractID, numbers.Count, providerSettings.PushSubscriptionDailyLimit, DateTime.UtcNow);
+                var handled = 0;
 
-                for (int i = 0; i < allowed; i += MaxShipmentIdsPerSubscription)
+                for (int i = 0; i < allowed && !limitReached; i += MaxShipmentIdsPerSubscription)
                 {
+                    var batch = numbers.Skip(i).Take(Math.Min(MaxShipmentIdsPerSubscription, allowed - i)).ToList();
                     var request = new RestRequest("/subscription", Method.Post);
                     request.AddHeader("DHL-API-Key", settings.APIKey);
-                    request.AddStringBody(BuildSubscriptionRequestJson(settings, subscription, numbers.Skip(i).Take(Math.Min(MaxShipmentIdsPerSubscription, allowed - i))), DataFormat.Json);
+                    request.AddStringBody(BuildSubscriptionRequestJson(settings, subscription, batch, hookUri), DataFormat.Json);
 
                     var response = await client.ExecuteAsync(request, ct);
-                    results.Add(ParseSubscriptionResponse(subscription.Service, (int)response.StatusCode, response.IsSuccessful, response.Content));
+                    var info = ParseSubscriptionResponse(subscription.Service, (int)response.StatusCode, response.IsSuccessful, response.Content);
+                    info.TrackingNumbers = [.. batch];
+                    results.Add(info);
+                    handled += batch.Count;
 
                     if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                     {
                         DHLPushSubscriptionQuota.Exhaust(providerSettings.ContractID, DateTime.UtcNow);
-                        return results;
+                        limitReached = true;
                     }
                 }
+
+                if (handled < numbers.Count)
+                    results.Add(new PushSubscriptionInfo
+                    {
+                        Service = subscription.Service.ToString(),
+                        TrackingNumbers = [.. numbers.Skip(handled)],
+                        Error = $"Not subscribed: the daily limit of {providerSettings.PushSubscriptionDailyLimit} subscriptions is reached, try again tomorrow."
+                    });
+
+                if (limitReached)
+                    break;
             }
 
+            if (waitForActivation)
+                await WaitForActivation(results, ct).ConfigureAwait(false);
+
             return results;
+        }
+
+        /// <summary>
+        /// Waits until the push handler reported the activation of every accepted subscription (or <see cref="ActivationWait"/> is over) and puts the result into the entries.
+        /// </summary>
+        private static async Task WaitForActivation(IEnumerable<PushSubscriptionInfo> subscriptions, CancellationToken ct)
+        {
+            var deadline = DateTime.UtcNow + ActivationWait;
+
+            foreach (var info in subscriptions.Where(s => s.Error is null && !string.IsNullOrEmpty(s.SubscriptionId)))
+            {
+                string? activationError = null;
+                var known = DHLSubscriptionActivations.TryGet(info.SubscriptionId!, out activationError);
+                while (!known && DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(ActivationPollInterval, ct).ConfigureAwait(false);
+                    known = DHLSubscriptionActivations.TryGet(info.SubscriptionId!, out activationError);
+                }
+
+                if (!known)
+                    info.Error = $"Subscribed, but not activated within {ActivationWait.TotalSeconds:0} s. DHL activates it when its validation push reaches the hook; check that DHL can reach the hook and that this instance handles it.";
+                else if (activationError is not null)
+                    info.Error = $"Subscribed, but the activation failed: {activationError}";
+                else
+                    info.Activated = true;
+            }
         }
 
         /// <summary>
@@ -474,7 +526,7 @@ namespace ShippingProAPICollection.Provider.DHL
         {
             try
             {
-                await SubscribeShipments(trackingNumbers, ct).ConfigureAwait(false);
+                await SubscribeToPushNotification(trackingNumbers, ct: ct).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -530,14 +582,14 @@ namespace ShippingProAPICollection.Provider.DHL
         /// Serializes the subscription request with Newtonsoft; RestSharp's default (System.Text.Json) ignores the Newtonsoft enum/property attributes
         /// and would send the enums as numbers.
         /// </summary>
-        public static string BuildSubscriptionRequestJson(DHLPushNotificationSettings settings, DHLPushSubscription subscription, IEnumerable<string> shipmentIds) =>
+        public static string BuildSubscriptionRequestJson(DHLPushNotificationSettings settings, DHLPushSubscription subscription, IEnumerable<string> shipmentIds, string hookUri) =>
             JsonConvert.SerializeObject(new DHLWebhookSubscriptionRequest
             {
                 Format = settings.Format,
                 Service = subscription.Service,
                 Hook = new DHLWebhookHook
                 {
-                    Uri = settings.HookUri,
+                    Uri = hookUri,
                     Authentication = new DHLWebhookAuthentication
                     {
                         Type = "ApiKeyAuthentication",
@@ -550,12 +602,12 @@ namespace ShippingProAPICollection.Provider.DHL
                 ShipmentIDs = [.. shipmentIds]
             }, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
 
-        private static void ValidatePushSettings(DHLPushNotificationSettings settings)
+        private static void ValidatePushSettings(DHLPushNotificationSettings settings, string hookUri)
         {
             if (!settings.Subscriptions.Any(s => s.IsActive))
                 throw new InvalidOperationException("At least one active DHL push subscription must be configured. Entries with an unknown Service (parcel-de, express, ecommerce) or Events value (pre-transit, transit, delivered, failure, unknown) are dropped when the settings are read.");
 
-            if (!Uri.TryCreate(settings.HookUri, UriKind.Absolute, out var hookUri) || hookUri.Scheme != Uri.UriSchemeHttps)
+            if (!Uri.TryCreate(hookUri, UriKind.Absolute, out var hook) || hook.Scheme != Uri.UriSchemeHttps)
                 throw new InvalidOperationException("DHL push HookUri must be an absolute https URL.");
 
             // The notification handler only understands the UTAPI "Default" format.
@@ -622,7 +674,18 @@ namespace ShippingProAPICollection.Provider.DHL
 
                 if (dhlParcelStatusChangeNotification.Scope == DHLPushScopeValidate &&
                     !string.IsNullOrEmpty(subscriptionId) && !string.IsNullOrEmpty(dhlParcelStatusChangeNotification.Secret))
-                    await ActivateSubscriber(new DHLSubscriberActivatorRequest { SubscriberId = subscriptionId, DhlApiHookSecret = dhlParcelStatusChangeNotification.Secret }, cancelToken).ConfigureAwait(false);
+                {
+                    try
+                    {
+                        await ActivateSubscriber(new DHLSubscriberActivatorRequest { SubscriberId = subscriptionId, DhlApiHookSecret = dhlParcelStatusChangeNotification.Secret }, cancelToken).ConfigureAwait(false);
+                        DHLSubscriptionActivations.Record(subscriptionId, null, DateTime.UtcNow);
+                    }
+                    catch (Exception ex)
+                    {
+                        DHLSubscriptionActivations.Record(subscriptionId, ex.Message, DateTime.UtcNow);
+                        throw;
+                    }
+                }
 
                 return new ParcelTrackingEventResult()
                 {

@@ -137,17 +137,21 @@ namespace ShippingProAPICollection
 
         /// <summary>
         /// Runs the push notification setup workflow of the provider (auth, subscribe) using the provider settings.
-        /// Returns what the provider answered (GLS returns the webhook user id to store in the secrets file; DHL and DPD an empty list).
+        /// Returns what the provider answered (GLS returns the webhook user id to store in the secrets file; DPD an empty list).
+        /// DHL parcels are subscribed when their label is created; <paramref name="trackingNumbers"/> subscribes parcels manually
+        /// (DHL then calls <paramref name="hookUri"/> instead of the one in the push settings), without them DHL returns an empty list.
         /// </summary>
-        public async Task<IReadOnlyList<PushSubscriptionInfo>> InitializePushNotification(ShippingProviderType type, string hookUri, CancellationToken ct = default)
+        public async Task<IReadOnlyList<PushSubscriptionInfo>> InitializePushNotification(ShippingProviderType type, string hookUri, string[]? trackingNumbers = null, CancellationToken ct = default)
         {
             EnsureHttpsUrl(hookUri, nameof(hookUri));
 
             switch (type)
             {
                 case ShippingProviderType.DHL:
-                    // DHL parcels are subscribed one by one when their label is created.
-                    return [];
+                    if (trackingNumbers is null || trackingNumbers.Length == 0)
+                        return [];
+
+                    return await GetServiceProviderFromType<DHLShipmentService>().First().SubscribeToPushNotification(trackingNumbers, hookUri, waitForActivation: true, ct: ct);
 
                 case ShippingProviderType.GLS:
                     return [await GetServiceProviderFromType<GLSShipmentService>().First().SubscribeToPushNotification(hookUri, ct)];

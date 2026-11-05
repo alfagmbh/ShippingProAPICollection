@@ -121,6 +121,8 @@ namespace ShippingProAPICollection.NUnitTests
                        WebhookName = "webhook",
                        WebhookUserId = "webhook-user",
                        IsActive = false,
+                       PortalPassword = "password",
+                       PortalUsername = "user",
                        WebhookUsername = GlsPushUser,
                        WebhookPassword = GlsPushPassword
                    }
@@ -512,7 +514,7 @@ namespace ShippingProAPICollection.NUnitTests
                 Events = [DHLNotificationEventTypes.PreTransit, DHLNotificationEventTypes.Delivered]
             };
 
-            var json = Newtonsoft.Json.Linq.JObject.Parse(DHLShipmentService.BuildSubscriptionRequestJson(settings, subscription, ["1234567890", "0987654321"]));
+            var json = Newtonsoft.Json.Linq.JObject.Parse(DHLShipmentService.BuildSubscriptionRequestJson(settings, subscription, ["1234567890", "0987654321"], "https://example.com/hook"));
 
             Assert.Multiple(() =>
             {
@@ -541,6 +543,24 @@ namespace ShippingProAPICollection.NUnitTests
         }
 
         [Test]
+        public async Task Ini_ForDhlWithTrackingNumbers_WithoutProvider_ReturnsBadRequest()
+        {
+            var result = await CreateController().Ini(ShippingProviderType.DHL, new PushInitRequest("https://example.com/hook", ["1234567890"]), CancellationToken.None);
+
+            AssertBadRequest(result, ShippingErrorCode.UNKNOW, "Invalid operation.");
+        }
+
+        [Test]
+        public async Task Ini_ForDhlWithTrackingNumbers_WithoutActiveSubscriptions_ReturnsBadRequest()
+        {
+            // The test provider has no subscription entries, so the settings are rejected before DHL is called.
+            var result = await CreateController(withDhlProvider: true)
+                .Ini(ShippingProviderType.DHL, new PushInitRequest("https://example.com/hook", ["1234567890"]), CancellationToken.None);
+
+            AssertBadRequest(result, ShippingErrorCode.UNKNOW, "Invalid operation.");
+        }
+
+        [Test]
         public void DHLPushSubscription_IsActiveByDefault_AndHonorsExplicitFalse()
         {
             Assert.That(new DHLPushSubscription { Service = DHLServiceDivisionTypes.ParcelDe, Events = [] }.IsActive, Is.True);
@@ -552,7 +572,7 @@ namespace ShippingProAPICollection.NUnitTests
         }
 
         [Test]
-        public void DHLSubscribeShipments_WithOnlyInactiveSubscriptions_Throws()
+        public void DHLSubscribeToPushNotification_WithOnlyInactiveSubscriptions_Throws()
         {
             var settings = new DHLSettings
             {
@@ -579,7 +599,7 @@ namespace ShippingProAPICollection.NUnitTests
             };
             var service = new DHLShipmentService(new ShippingProAPIShipFromAddress { Name = "n", Street = "s", ContactName = "c", CountryIsoA2Code = "DE", City = "c", Email = "e@e.de", PostCode = "1", Phone = "1" }, settings);
 
-            Assert.ThrowsAsync<InvalidOperationException>(() => service.SubscribeShipments(["1234567890"]));
+            Assert.ThrowsAsync<InvalidOperationException>(() => service.SubscribeToPushNotification(["1234567890"]));
         }
 
         [Test]
@@ -631,7 +651,7 @@ namespace ShippingProAPICollection.NUnitTests
         [Test]
         public void GLSPushInitResult_OnSuccess_ReturnsWebhookUserIdToSave()
         {
-            var info = GLSShipmentService.BuildPushInitResult("user-id", null);
+            var info = GLSShipmentService.BuildPushInitResult("user-id", null, new ());
 
             Assert.That(info.Service, Is.EqualTo("GLS"));
             Assert.That(info.Error, Is.Null);
@@ -641,7 +661,7 @@ namespace ShippingProAPICollection.NUnitTests
         [Test]
         public void GLSPushInitResult_OnRejectedStep_KeepsWebhookUserIdAndHidesResponse()
         {
-            var info = GLSShipmentService.BuildPushInitResult("user-id", "subscription");
+            var info = GLSShipmentService.BuildPushInitResult("user-id", "subscription",  new());
 
             Assert.That(info.Error, Is.EqualTo("GLS rejected the subscription request."));
             Assert.That(info.ValuesToSave!["WebhookUserId"], Is.EqualTo("user-id"));
@@ -768,7 +788,9 @@ namespace ShippingProAPICollection.NUnitTests
             WebhookName = "webhook",
             WebhookUserId = "webhook-user",
             WebhookUsername = username,
-            WebhookPassword = password
+            WebhookPassword = password,
+            PortalPassword = "portal-password",
+            PortalUsername = "portal-username"
         };
 
         [Test]

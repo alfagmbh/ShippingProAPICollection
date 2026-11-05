@@ -48,7 +48,9 @@ namespace ShippingProAPICollection.RestApi.Controllers
 
         /// <summary>
         /// Sets up push notifications for the provider (auth and subscribe as needed) using the provider settings.
-        /// DHL has nothing to set up here: parcels are subscribed when their label is created and activated when DHL's validation push arrives.
+        /// DHL parcels are subscribed when their label is created and activated when DHL's validation push arrives; TrackingNumber subscribes parcels manually
+        /// (subject to the same daily limit), with HookUri overriding the one in the secrets file. The call then waits up to 15 s for the activation,
+        /// each entry lists its TrackingNumbers and whether it is Activated; an entry that was not subscribed or not activated carries an Error.
         /// Returns what the provider answered per subscription: 200 when all were accepted, 207 when any was rejected (see the Error of each entry).
         /// ValuesToSave holds provider-issued values (e.g. the GLS WebhookUserId) that have to be stored in the secrets file.
         /// </summary>
@@ -58,7 +60,7 @@ namespace ShippingProAPICollection.RestApi.Controllers
         [ProducesResponseType(typeof(IReadOnlyList<PushSubscriptionInfo>), StatusCodes.Status207MultiStatus)]
         public async Task<IActionResult> Ini([FromRoute] ShippingProviderType type, [FromBody, BindRequired] PushInitRequest request, CancellationToken ct) =>
             await HandleProcessWithResult(
-                t => shippingProAPICollectionService.InitializePushNotification(type, request.HookUri, t),
+                t => shippingProAPICollectionService.InitializePushNotification(type, request.HookUri, request.TrackingNumber, t),
                 ct,
                 SubscriptionsResult);
 
@@ -126,5 +128,5 @@ namespace ShippingProAPICollection.RestApi.Controllers
         #endregion private handle method
     }
 
-    public record PushInitRequest(string HookUri);
+    public record PushInitRequest(string HookUri, string[]? TrackingNumber = null);
 }

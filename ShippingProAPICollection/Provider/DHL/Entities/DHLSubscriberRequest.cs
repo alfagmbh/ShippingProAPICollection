@@ -14,6 +14,7 @@ namespace ShippingProAPICollection.Provider.DHL.Entities
         /// Optional; the push settings' API key is used when omitted.
         /// </summary>
         public string? DhlApiKey { get; set; }
+      
 
     }
 }
