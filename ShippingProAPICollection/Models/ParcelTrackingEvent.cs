@@ -60,16 +60,16 @@
         public string? Status { get; set; }
         public string? StatusMessage { get; set; }
         public string? EstimatedDeliveryDate { get; set; }
-        public ReturnStatus? IsReturned { get; set; }
+        public ParcelReturn? IsReturn { get; set; }
         public string? APIValue { get; set; }
         public DateTime? CreatedAt = DateTime.UtcNow;
     }
 
 
-    public enum ReturnStatus
+    public enum ParcelReturn
     {
-        NotReturned,
-        Returned,
+        IsReturn,
+        IsNotReturn,
         Unknown
     }
 }

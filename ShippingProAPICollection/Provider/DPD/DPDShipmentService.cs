@@ -144,7 +144,7 @@ namespace ShippingProAPICollection.Provider.DPD
                 Status = statusType.ToString(),
                 StatusMessage = statusType.TranslateTrackingStatusMessage(),
                 APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
-                IsReturned = ReturnStatus.Unknown, // DPD does not provide return status in the webhook, so we cannot determine it here
+                IsReturn = ParcelReturn.Unknown, // DPD does not provide return status in the webhook, so we cannot determine it here
             };
 
             return Task.FromResult(new ParcelTrackingEventResult()

@@ -678,7 +678,7 @@ namespace ShippingProAPICollection.Provider.DHL
                     StatusMessage = statusType.TranslateTrackingStatusMessage(),
                     APIValue = apiValue,
                     EstimatedDeliveryDate = shipment.EstimatedTimeOfDelivery,
-                    IsReturned = shipment.ReturnFlag.HasValue ? (shipment.ReturnFlag.Value ? ReturnStatus.Returned : ReturnStatus.NotReturned) : ReturnStatus.Unknown,
+                    IsReturn = shipment.ReturnFlag.HasValue ? (shipment.ReturnFlag.Value ? ParcelReturn.IsReturn : ParcelReturn.IsNotReturn) : ParcelReturn.Unknown,
                     ParcelNumber = shipment.Id,
                 };
 

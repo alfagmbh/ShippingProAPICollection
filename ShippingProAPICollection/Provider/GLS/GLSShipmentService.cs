@@ -446,7 +446,7 @@ namespace ShippingProAPICollection.Provider.GLS
                 ParcelNumber = glsParcelStatusChangeNotification.ParcelId,
                 Status = statusType.ToString(),
                 StatusMessage = statusType.TranslateTrackingStatusMessage(),
-                IsReturned = ReturnStatus.Unknown, // GLS does not provide return status in the webhook nor in the T&T API, so we cannot determine it here
+                IsReturn = ParcelReturn.Unknown, // GLS does not provide return status in the webhook nor in the T&T API, so we cannot determine it here
                 APIValue = JsonConvert.SerializeObject(apiValue),
                 CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null,
             };
