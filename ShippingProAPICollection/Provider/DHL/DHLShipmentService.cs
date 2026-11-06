@@ -488,20 +488,6 @@ namespace ShippingProAPICollection.Provider.DHL
         }
 
         /// <summary>
-        /// Subscribing is best effort: the labels are already created at DHL, so a failed or skipped subscription must not fail the label request.
-        /// </summary>
-        private async Task TrySubscribeShipments(IEnumerable<string?> trackingNumbers, CancellationToken ct)
-        {
-            try
-            {
-                await SubscribeToPushNotification(trackingNumbers, ct: ct).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-            }
-        }
-
-        /// <summary>
         /// Parcels are subscribed when their label is created (<see cref="RequestLabel"/>); there is nothing to set up in advance.
         /// </summary>
         public Task InitializePushNotification(string hookUri, CancellationToken ct = default) => Task.CompletedTask;
