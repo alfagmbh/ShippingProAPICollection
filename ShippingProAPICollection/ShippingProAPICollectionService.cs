@@ -228,6 +228,6 @@ namespace ShippingProAPICollection
             throw new InvalidOperationException($"No {typeof(T).Name} configured. Add a provider of this type to the application settings.");
         }
         
-        public Task<GLSParcelDetails[]> GetGLSParcelInfo(string parcelNumber) => GetServiceProviderFromType<GLSShipmentService>().First().GetParcelDetails(new[] { parcelNumber });
+        public Task<GLSParcelDetails[]> GetGLSParcelInfo(string parcelNumber) => GetServiceProviderFromType<GLSShipmentService>().First().TryGetParcelDetails(new[] { parcelNumber });
     }
 }

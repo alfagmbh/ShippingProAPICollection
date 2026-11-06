@@ -374,8 +374,8 @@ namespace ShippingProAPICollection.Provider.GLS
         /// Parcels GLS cannot resolve are not thrown but returned with <see cref="GLSParcelDetails.ErrorCode"/> set.
         /// </summary>
         /// <param name="parcelNumbers">GLS parcel numbers (unit nos)</param>
-        /// <param name="language">Language of the event descriptions, e.g. EN or DE</param>
-        public async Task<GLSParcelDetails[]> GetParcelDetails(string[] parcelNumbers, CancellationToken ct = default)
+        /// <param name="ct">Cancellation token</param>
+        public async Task<GLSParcelDetails[]> TryGetParcelDetails(string[] parcelNumbers, CancellationToken ct = default)
         {
             var pushNotificationSettings = providerSettings.PushNotificationSettings
                 ?? throw new InvalidOperationException($"Push notification settings for contract {providerSettings.ContractID} are missing in the secrets file.");
@@ -405,6 +405,10 @@ namespace ShippingProAPICollection.Provider.GLS
 
             var response = await client.ExecuteAsync(request, ct).ConfigureAwait(false);
 
+            // The T&T API allows 500 requests per day by default; the shared helper does not map 429.
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                throw new GLSException(ShippingErrorCode.TO_MANY_REQUESTS, "GLS-Paketverfolgung: Anfragelimit überschritten", new { payload = parcelNumbers, response = response.Content });
+
             HTTPReponseUtils.CheckHttpResponse<GLSException>("GLS-Paketverfolgung fehlgeschlagen", parcelNumbers, response);
 
             var parcels = JsonConvert.DeserializeObject<GLSParcelsResponse>(response.Content ?? string.Empty)?.Parcels
@@ -430,19 +434,19 @@ namespace ShippingProAPICollection.Provider.GLS
                     Message = "Invalid GLS parcel status change notification"
                 };
 
-            GlsApiValue? apiValue = providerSettings.PushNotificationSettings?.WithDetails == true
+            var parcelDetail = await TryGetParcelDetails(new[] { glsParcelStatusChangeNotification.ParcelId }, cancelToken);
 
-                ? new GlsApiValue(glsParcelStatusChangeNotification.EventCode,
-                                  JsonConvert.SerializeObject(
-                                      await GetParcelDetails(new[] { glsParcelStatusChangeNotification.ParcelId }, cancelToken)))
-
-                : new GlsApiValue(glsParcelStatusChangeNotification.EventCode);
+            GlsApiValue? apiValue = new GlsApiValue(glsParcelStatusChangeNotification.EventCode,
+                                  JsonConvert.SerializeObject(parcelDetail));
 
             //transform the webhook data into a model
+            var statusType = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification.ParcelStatus);
             ParcelTrackingEvent? trackParcelResponse = new()
             {
                 ParcelNumber = glsParcelStatusChangeNotification.ParcelId,
-                Status = GLSTrackingStatusTypes.GetTrackingStatusType(glsParcelStatusChangeNotification.ParcelStatus).ToString(),
+                Status = statusType.ToString(),
+                StatusMessage = statusType.TranslateTrackingStatusMessage(),
+                IsReturned = ReturnStatus.Unknown, // GLS does not provide return status in the webhook nor in the T&T API, so we cannot determine it here
                 APIValue = JsonConvert.SerializeObject(apiValue),
                 CreatedAt = DateTime.TryParse(glsParcelStatusChangeNotification.EventDateTime, out var parsedDate) ? parsedDate : (DateTime?)null,
             };

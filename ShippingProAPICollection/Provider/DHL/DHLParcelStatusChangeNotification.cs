@@ -17,6 +17,9 @@ namespace ShippingProAPICollection.Provider.DHL
         [JsonIgnore]
         public IReadOnlyDictionary<string, string>? RequestHeaders { get; set; }
 
+        [JsonProperty("format")]
+        public string? Format { get; set; }
+
         [JsonProperty("self")]
         public string? Self { get; set; }
 
@@ -44,8 +47,44 @@ namespace ShippingProAPICollection.Provider.DHL
         [JsonProperty("service")]
         public string? Service { get; set; }
 
+        [JsonProperty("origin")]
+        public DHLPushLocation? Origin { get; set; }
+
+        [JsonProperty("destination")]
+        public DHLPushLocation? Destination { get; set; }
+
         [JsonProperty("status")]
         public required DHLPushStatus Status { get; set; }
+
+        [JsonProperty("estimatedTimeOfDelivery")]
+        public string? EstimatedTimeOfDelivery { get; set; }
+
+        [JsonProperty("returnFlag")]
+        public bool? ReturnFlag { get; set; }
+
+        [JsonProperty("details")]
+        public DHLPushDetails? Details { get; set; }
+
+        [JsonProperty("events")]
+        public List<DHLPushStatus>? Events { get; set; }
+    }
+
+    public class DHLPushDetails
+    {
+        [JsonProperty("product")]
+        public DHLPushProduct? Product { get; set; }
+
+        [JsonProperty("proofOfDeliverySignedAvailable")]
+        public bool? ProofOfDeliverySignedAvailable { get; set; }
+    }
+
+    public class DHLPushProduct
+    {
+        [JsonProperty("productCode")]
+        public string? ProductCode { get; set; }
+
+        [JsonProperty("productName")]
+        public string? ProductName { get; set; }
     }
 
     public class DHLPushStatus
@@ -61,6 +100,9 @@ namespace ShippingProAPICollection.Provider.DHL
 
         [JsonProperty("status")]
         public string? StatusText { get; set; }
+
+        [JsonProperty("statusDetailed")]
+        public string? StatusDetailed { get; set; }
 
         [JsonProperty("description")]
         public string? Description { get; set; }

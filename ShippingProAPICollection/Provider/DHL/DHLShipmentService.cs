@@ -98,7 +98,7 @@ namespace ShippingProAPICollection.Provider.DHL
                         });
                     }
 
-                    await TrySubscribeShipments(labels.Select(l => l.ParcelNumber), cancelToken).ConfigureAwait(false);
+                    await SubscribeToPushNotification(labels.Select(l => l.ParcelNumber), ct: cancelToken);
 
                     return labels;
                 }
@@ -669,12 +669,16 @@ namespace ShippingProAPICollection.Provider.DHL
             string apiValue = JsonConvert.SerializeObject(dhlParcelStatusChangeNotification);
             List<ParcelTrackingEvent> trackingEvents = new List<ParcelTrackingEvent>();
             // A single push can contain several shipments; publish one tracking event per shipment.
-            foreach (var shipment in dhlParcelStatusChangeNotification.Shipments)
+            foreach (DHLPushShipment shipment in dhlParcelStatusChangeNotification.Shipments)
             {
+                var statusType = DHLTrackingStatusTypes.GetTrackingStatusType(shipment.Status.StatusCode ?? "");
                 ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent()
                 {
-                    Status = DHLTrackingStatusTypes.GetTrackingStatusType(shipment.Status.StatusCode ?? "").ToString(),
+                    Status = statusType.ToString(),
+                    StatusMessage = statusType.TranslateTrackingStatusMessage(),
                     APIValue = apiValue,
+                    EstimatedDeliveryDate = shipment.EstimatedTimeOfDelivery,
+                    IsReturned = shipment.ReturnFlag.HasValue ? (shipment.ReturnFlag.Value ? ReturnStatus.Returned : ReturnStatus.NotReturned) : ReturnStatus.Unknown,
                     ParcelNumber = shipment.Id,
                 };
 

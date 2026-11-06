@@ -137,11 +137,14 @@ namespace ShippingProAPICollection.Provider.DPD
                 });
 
             // Process the parcel status change notification here
+            var statusType = DPDTrackingStatusTypes.GetTrackingStatusType(dpdParcelStatusChangeNotification.Status);
             ParcelTrackingEvent trackParcelResponse = new ParcelTrackingEvent
             {
                 ParcelNumber = dpdParcelStatusChangeNotification.ParcelNumber,
-                Status = DPDTrackingStatusTypes.GetTrackingStatusType(dpdParcelStatusChangeNotification.Status).ToString(),
+                Status = statusType.ToString(),
+                StatusMessage = statusType.TranslateTrackingStatusMessage(),
                 APIValue = JsonConvert.SerializeObject(dpdParcelStatusChangeNotification),
+                IsReturned = ReturnStatus.Unknown, // DPD does not provide return status in the webhook, so we cannot determine it here
             };
 
             return Task.FromResult(new ParcelTrackingEventResult()
