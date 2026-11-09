@@ -4,16 +4,18 @@
 [![Publish Nuget](https://github.com/kevinvenclovas/ShippingProAPICollection/actions/workflows/publish-nuget.yml/badge.svg)](https://github.com/kevinvenclovas/ShippingProAPICollection/actions/workflows/publish-nuget.yml)
 [![NuGet](https://img.shields.io/nuget/v/ShippingProAPICollection.svg)](https://www.nuget.org/packages/ShippingProAPICollection/)
 # Shipping Pro API Collection
-Welcome to our C# library, designed to integrate multiple shipping service APIs into one streamlined solution. This project provides a unified interface for GLS GLS, DHL, DPD and TOF simplifying the shipping process for developers and businesses. With easy integration, you can handle logistics across different carriers seamlessly. Ideal for enhancing efficiency in e-commerce and logistics operations.
+Welcome to our C# library, designed to integrate multiple shipping service APIs into one streamlined solution. This project provides a unified interface for GLS, DHL, DPD and TOF simplifying the shipping process for developers and businesses. With easy integration, you can handle logistics across different carriers seamlessly. Ideal for enhancing efficiency in e-commerce and logistics operations.
 
 ## Contents
 
 - [Provider](#provider)
 - [Get Started](#get-started)
-	- [GLS Germany](#gls-germany) 
-	- [DHL Parcel Germany](#dhl-parcel-germany)
-	- [DPD Germany](#dpd-germany)
+	- [GLS](#gls)
+	- [DHL Parcel DE Shipping](#dhl-parcel-de-shipping)
+	- [DPD](#dpd)
 	- [Trans-o-flex](#trans-o-flex)
+- [Push notification settings (REST API)](#push-notification-settings-rest-api)
+- [REST API endpoints](#rest-api-endpoints)
 - [Add multiple contract accounts](#add-multiple-contract-accounts)
 - [Complete Example: Creating a Shipping Label with Custom Sender Address](#complete-example-creating-a-shipping-label-with-custom-sender-address)
 	- [Setup and Configuration](#setup-and-configuration)
@@ -22,21 +24,24 @@ Welcome to our C# library, designed to integrate multiple shipping service APIs 
 
 ## Provider
 
-- [X] GLS GLS Germany ([API Documentation](https://shipit.gls-group.eu/webservices/3_2_9/doxygen/WS-REST-API/index.html))
+- [X] GLS Germany ([API Documentation](https://shipit.gls-group.eu/webservices/3_2_9/doxygen/WS-REST-API/index.html))
 	- [X] Create Shipment
 	- [X] Cancel Shipment
 	- [X] Validate Label
 	- [X] Get Estimated Delivery Days
+	- [X] Track And Trace (parcel details)
+	- [X] Push notifications (tracking events)
 
-- [X] DHL Parcel Germany (2.1.8) ([API Documentation] (https://developer.dhl.com/api-reference/parcel-de-shipping-post-parcel-germany-v2#downloads-section))
+- [X] DHL Parcel Germany (2.1.8) ([API Documentation](https://developer.dhl.com/api-reference/parcel-de-shipping-post-parcel-germany-v2#downloads-section))
 	- [X] Create Shipment
 	- [X] Cancel Shipment
+	- [X] Push notifications (tracking events)
 	
-- [X] DPD Germany (4.4) ([API Documentation] (https://esolutions.dpd.com/dokumente/ShipmentService_V4_4.pdf))
-	- [X] Login (2.0) ([API Documentation] (https://esolutions.dpd.com/dokumente/LoginService_V2_0.pdf))
+- [X] DPD Germany (4.4) ([API Documentation](https://esolutions.dpd.com/dokumente/ShipmentService_V4_4.pdf))
+	- [X] Login (2.0) ([API Documentation](https://esolutions.dpd.com/dokumente/LoginService_V2_0.pdf))
 	- [X] Create Shipment
 	- [X] Cancel Shipment
-	- [ ] 
+	- [X] Push notifications (tracking events)
 - [X] Trans-o-flex
 	- [X] Login
 	- [X] Create Shipment
@@ -48,19 +53,24 @@ Before requesting shipping labels, you must first set up your specific shipping 
 To finalize the setup, register the ShippingProAPICollectionService as a scoped service in your application.
 
 	services.AddScoped<ShippingProAPICollectionService>();
-	ShippingProAPICollectionSettings providerSettings = new ShippingProAPICollectionSettings()
+	// The settings need a default ship-from address (see the complete example below)
+	ShippingProAPICollectionSettings providerSettings = new ShippingProAPICollectionSettings(defaultShipFromAddress);
 	
-#### GLS GLS
+#### GLS
  
 	GLSSettings glsSettings = new GLSSettings()
 	{   
 		 // PLEASE GET IN TOUCH WITH YOUR GLS CONTACT TO GET THE FOLLOWING INFORMATIONS
 	 
 		 // Api domain => https://shipit-wbm-test01.gls-group.eu:443
-		 ApiDomain = "https://shipit-wbm-test01.gls-group.eu:443",         
-		 ContactID = "276a45fkqM",       
-		 Username = "276a45fkqM"
-		 Password = "lXZBIF7uRccyK7Ohr64d",       
+		 ApiDomain = "https://shipit-wbm-test01.gls-group.eu:443",
+		 ContactID = "<your contact id>",
+		 Username = "<your username>",
+		 Password = "<your password>",
+		 ApplicationID = "<your application id>",
+		 ApplicationSecret = "<your application secret>",
+		 // Optional
+		 CustomerID = null
 	};
 	providerSettings.AddSettings("GLS", glsSettings);
 
@@ -125,7 +135,9 @@ To finalize the setup, register the ShippingProAPICollectionService as a scoped 
 	      "WebhookName": "...",
 	      "WebhookUserId": "...",
 	      "WebhookUsername": "...",
-	      "WebhookPassword": "..."
+	      "WebhookPassword": "...",
+	      "PortalUsername": "...",
+	      "PortalPassword": "..."
 	    },
 	    "DHL1": {
 	      "ApiDomain": "sandbox",
@@ -159,6 +171,23 @@ A body that is not valid JSON is answered with 400.
 
 Without a matching section the push settings stay empty and the push endpoints answer with an error. The file is read when the application starts and when provider settings are updated.
 
+## REST API endpoints
+The REST API project (`ShippingProAPICollection.RestApi`) exposes the library over HTTP.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| POST | `/api/shipment/label` | Create shipping label(s) |
+| DELETE | `/api/shipment/label` | Cancel a shipping label |
+| POST | `/api/shipment/label/validate` | Validate a label request |
+| POST | `/api/shipment/label/confirm` | Confirm a shipment |
+| GET | `/api/shipment/settings` | Read the application settings |
+| PUT | `/api/shipment/settings/provider` | Add or update a provider contract |
+| DELETE | `/api/shipment/settings/provider/{contractid}` | Remove a provider contract |
+| PUT | `/api/shipment/settings/account` | Update the account settings |
+| DELETE | `/api/shipment/cache` | Clear the cache |
+| GET, POST | `/api/push/notification/{type}` | Receive a forwarded provider push (`DHL`, `GLS`, `DPD`) |
+| POST | `/api/push/notification/{type}/ini` | Set up push notifications / subscribe parcels |
+
 ## Add multiple contract accounts
 At times, you may need to utilize multiple contract accounts from the same provider. You can add multiple contracts by specifying a contract ID like this:
 
@@ -176,7 +205,7 @@ At times, you may need to utilize multiple contract accounts from the same provi
 	providerSettings.AddSettings("DPD1", dpdContract1Settings);
 	
 	// Setup second contract
-	DPDSettings dpdContract3Settings = new DPDSettings()
+	DPDSettings dpdContract2Settings = new DPDSettings()
 	{
 		 // Api domain is the XXXXXXX part of your DPD api url => https://public-XXXXXXX.dpd.com/services/ShipmentService/V4_4/
      	 ApiDomain = "ws-stage",
@@ -185,7 +214,7 @@ At times, you may need to utilize multiple contract accounts from the same provi
      	 Username = "sandboxdpd",
      	 Password = "xMmshh1"
 	};
-	providerSettings.AddSettings("DPD2", dpdSettings);
+	providerSettings.AddSettings("DPD2", dpdContract2Settings);
 
 ## Complete Example: Creating a Shipping Label with Custom Sender Address
 
@@ -261,8 +290,8 @@ var customShipFromAddress = new ShippingProAPIShipFromAddress()
 var request = new DHLShipmentRequestModel("DHL")
 {
     // Recipient information
-    Adressline1 = "Max Mustermann",
-    Adressline2 = "c/o Muster GmbH",
+    Addressline1 = "Max Mustermann",
+    Addressline2 = "c/o Muster GmbH",
     Street = "Musterstraße 789",
     PostCode = "98765",
     City = "München",
